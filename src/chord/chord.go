@@ -1,10 +1,11 @@
 package chord
 
 import (
+	"fmt"
+	"log"
 	"math"
+	"net/rpc"
 	"sync"
-
-	"../labrpc"
 )
 
 // const (
@@ -17,10 +18,10 @@ import (
 // see table 1 of chord paper
 type Node struct {
 	mu          sync.Mutex
-	me          int               // id of the node, lives in range [0, 2^m-1]
-	addr        *labrpc.ClientEnd // the node's own address
-	finger      []NodeInfo        // finger table
-	successor   NodeInfo          // list of r successors, see sec E.3 of chord paper
+	me          int        // id of the node, lives in range [0, 2^m-1]
+	addr        string     // the node's own address
+	finger      []NodeInfo // finger table
+	successor   NodeInfo   // list of r successors, see sec E.3 of chord paper
 	predecessor NodeInfo
 	next        int // used for fixing finger table, see fix_fingers() in Fig 6 of chord paper
 }
@@ -28,25 +29,28 @@ type Node struct {
 // for storing info of other nodes
 // also used as the args type for RPCs
 type NodeInfo struct {
-	Addr *labrpc.ClientEnd
+	Addr string
 	Id   int
 }
 
 type RPCReply struct {
-	Addr *labrpc.ClientEnd
+	Addr string
 	Id   int
 	// Err  Err
 	Success bool
 }
 
 // create a new chord ring
-func (n *Node) create() {
+func (n *Node) Create(address string) {
 	// clear the predecessor
 	var n_pred NodeInfo
 	n.predecessor = n_pred
+	n.addr = address
 
 	n.successor.Addr = n.addr
 	n.successor.Id = n.me
+
+	rpc.Register(n)
 }
 
 func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) {
@@ -64,7 +68,7 @@ func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) {
 		// call n_preced.FindSuccessor
 		for {
 			var reply_inner *NodeInfo
-			ok := n_preced.Addr.Call("Node.FindSuccessor", args, reply_inner)
+			ok := call(n_preced.Addr, "Node.FindSuccessor", args, reply_inner)
 			if ok {
 				reply.Addr = reply_inner.Addr
 				reply.Id = reply_inner.Id
@@ -80,7 +84,7 @@ func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) {
 func (n *Node) closest_preceding_node(id int) NodeInfo {
 	var n_preced NodeInfo
 	for i := len(n.finger) - 1; i >= 0; i-- {
-		if n.finger[i].Addr != nil && n.finger[i].Id < id {
+		if n.finger[i].Addr != "" && n.finger[i].Id < id {
 			n_preced.Addr = n.finger[i].Addr
 			n_preced.Id = n.finger[i].Id
 			return n_preced
@@ -103,7 +107,7 @@ func (n *Node) join(n_current *NodeInfo) {
 
 	for {
 		var reply RPCReply
-		ok := n_current.Addr.Call("Node.FindSuccessor", args, reply)
+		ok := call(n_current.Addr, "Node.FindSuccessor", args, reply)
 		if ok {
 			n.mu.Lock()
 			n.successor.Addr = reply.Addr
@@ -129,7 +133,7 @@ func (n *Node) stabilize() {
 	n.mu.Lock()
 	successor_addr := n.successor.Addr
 	n.mu.Unlock()
-	ok := successor_addr.Call("Node.GetPredecessor", args, reply)
+	ok := call(successor_addr, "Node.GetPredecessor", args, reply)
 	if ok {
 		n.mu.Lock()
 		if reply.Id > n.me && reply.Id < n.successor.Id {
@@ -141,13 +145,13 @@ func (n *Node) stabilize() {
 		args.Id = n.me
 		n.mu.Unlock()
 		var reply RPCReply
-		_ = successor_addr.Call("Node.Notify", args, reply)
+		_ = call(successor_addr, "Node.Notify", args, reply)
 	}
 }
 
 func (n *Node) Notify(args *NodeInfo, reply *RPCReply) {
 	n.mu.Lock()
-	if (n.predecessor.Addr == nil) || (args.Id > n.predecessor.Id && args.Id < n.me) {
+	if (n.predecessor.Addr == "") || (args.Id > n.predecessor.Id && args.Id < n.me) {
 		n.predecessor.Addr = args.Addr
 		n.predecessor.Id = args.Id
 	}
@@ -156,7 +160,7 @@ func (n *Node) Notify(args *NodeInfo, reply *RPCReply) {
 	return
 }
 
-func (n *Node) fix_finers() {
+func (n *Node) fix_fingers() {
 	var args NodeInfo
 	var reply RPCReply
 	n.mu.Lock()
@@ -171,4 +175,24 @@ func (n *Node) fix_finers() {
 	n.finger[n.next].Addr = reply.Addr
 	n.finger[n.next].Id = reply.Id
 	n.mu.Unlock()
+}
+
+//
+// send an RPC request to the given address, wait for the response.
+// returns false if something goes wrong.
+//
+func call(address string, rpcname string, args interface{}, reply interface{}) bool {
+	c, err := rpc.DialHTTP("tcp", address)
+	if err != nil {
+		log.Fatalf("Failed to connect to server with address: %v. %v", address, err)
+	}
+	defer c.Close()
+
+	err = c.Call(rpcname, args, reply)
+	if err == nil {
+		return true
+	}
+
+	fmt.Println(err)
+	return false
 }
