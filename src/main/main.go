@@ -1,4 +1,4 @@
-package chord
+package main
 
 import (
 	"log"
@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"../chord"
+	"../dht"
 )
 
 func main() {
@@ -19,6 +20,7 @@ func main() {
 	// Create DHT and start chord here.
 	ch := chord.Node{}
 	ch.Create("127.0.0.1:" + port)
+	dht := dht.Make(&ch)
 
 	httpServer(port)
 }
