@@ -9,6 +9,7 @@ import (
 
 	"../chord"
 	"../dht"
+	"../melody"
 )
 
 func main() {
@@ -21,6 +22,7 @@ func main() {
 	ch := chord.Node{}
 	ch.Create("127.0.0.1:" + port)
 	dht := dht.Make(&ch)
+	melody := melody.Make(&dht)
 
 	httpServer(port)
 }
