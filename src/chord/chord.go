@@ -1,11 +1,11 @@
 package chord
 
 import (
-	"fmt"
-	"log"
 	"math"
 	"net/rpc"
 	"sync"
+
+	network "../common"
 )
 
 // const (
@@ -68,7 +68,7 @@ func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) {
 		// call n_preced.FindSuccessor
 		for {
 			var reply_inner *NodeInfo
-			ok := call(n_preced.Addr, "Node.FindSuccessor", args, reply_inner)
+			ok := network.Call(n_preced.Addr, "Node.FindSuccessor", args, reply_inner)
 			if ok {
 				reply.Addr = reply_inner.Addr
 				reply.Id = reply_inner.Id
@@ -107,7 +107,7 @@ func (n *Node) join(n_current *NodeInfo) {
 
 	for {
 		var reply RPCReply
-		ok := call(n_current.Addr, "Node.FindSuccessor", args, reply)
+		ok := network.Call(n_current.Addr, "Node.FindSuccessor", args, reply)
 		if ok {
 			n.mu.Lock()
 			n.successor.Addr = reply.Addr
@@ -133,7 +133,7 @@ func (n *Node) stabilize() {
 	n.mu.Lock()
 	successor_addr := n.successor.Addr
 	n.mu.Unlock()
-	ok := call(successor_addr, "Node.GetPredecessor", args, reply)
+	ok := network.Call(successor_addr, "Node.GetPredecessor", args, reply)
 	if ok {
 		n.mu.Lock()
 		if reply.Id > n.me && reply.Id < n.successor.Id {
@@ -145,7 +145,7 @@ func (n *Node) stabilize() {
 		args.Id = n.me
 		n.mu.Unlock()
 		var reply RPCReply
-		_ = call(successor_addr, "Node.Notify", args, reply)
+		_ = network.Call(successor_addr, "Node.Notify", args, reply)
 	}
 }
 
@@ -178,21 +178,17 @@ func (n *Node) fix_fingers() {
 }
 
 //
-// send an RPC request to the given address, wait for the response.
-// returns false if something goes wrong.
+// Lookup a given key in the chord ring
+// Returns the Ip address of the chord server with the key
 //
-func call(address string, rpcname string, args interface{}, reply interface{}) bool {
-	c, err := rpc.DialHTTP("tcp", address)
-	if err != nil {
-		log.Fatalf("Failed to connect to server with address: %v. %v", address, err)
-	}
-	defer c.Close()
+func (n *Node) Lookup(key string) string {
+	return ""
+}
 
-	err = c.Call(rpcname, args, reply)
-	if err == nil {
-		return true
-	}
-
-	fmt.Println(err)
+//
+// Lets the caller know if this chord node is responsible for the
+// specific key.
+//
+func (n *Node) IsMyKey(key string) bool {
 	return false
 }
