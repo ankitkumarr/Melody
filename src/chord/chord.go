@@ -4,12 +4,14 @@ import (
 	"math"
 	"net/rpc"
 	"sync"
+	"time"
 
 	"sync/atomic"
-	"time"
 
 	network "../common"
 )
+
+const RpcTimeout = 5 * time.Second
 
 // const (
 // 	OK      = "OK"
@@ -82,7 +84,7 @@ func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) {
 		// call n_preced.FindSuccessor
 		for {
 			var reply_inner *NodeInfo
-			ok := network.Call(n_preced.Addr, "Node.FindSuccessor", args, reply_inner)
+			ok := network.Call(n_preced.Addr, "Node.FindSuccessor", &args, &reply_inner, RpcTimeout)
 			if ok {
 				reply.Addr = reply_inner.Addr
 				reply.Id = reply_inner.Id
@@ -121,7 +123,7 @@ func (n *Node) join(n_current *NodeInfo) {
 
 	for {
 		var reply RPCReply
-		ok := network.Call(n_current.Addr, "Node.FindSuccessor", args, reply)
+		ok := network.Call(n_current.Addr, "Node.FindSuccessor", &args, &reply, RpcTimeout)
 		if ok {
 			n.mu.Lock()
 			n.successor.Addr = reply.Addr
@@ -148,7 +150,7 @@ func (n *Node) stabilize_ticker() {
 		n.mu.Lock()
 		successor_addr := n.successor.Addr
 		n.mu.Unlock()
-		ok := network.Call(successor_addr, "Node.GetPredecessor", args, reply)
+		ok := network.Call(successor_addr, "Node.GetPredecessor", args, reply, RpcTimeout)
 		if ok {
 			n.mu.Lock()
 			if reply.Id > n.me && reply.Id < n.successor.Id {
@@ -160,7 +162,7 @@ func (n *Node) stabilize_ticker() {
 			args.Id = n.me
 			n.mu.Unlock()
 			var reply RPCReply
-			_ = network.Call(successor_addr, "Node.Notify", args, reply)
+			_ = network.Call(successor_addr, "Node.Notify", args, reply, RpcTimeout)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -206,7 +208,7 @@ func (n *Node) check_predecessor_ticker() {
 		if pred_addr != "" {
 			var args NodeInfo
 			var reply RPCReply
-			ok := network.Call(pred_addr, "Node.Alive", &args, &reply)
+			ok := network.Call(pred_addr, "Node.Alive", &args, &reply, RpcTimeout)
 			n.mu.Lock()
 			if !(ok && reply.Success) {
 				var null_node NodeInfo
