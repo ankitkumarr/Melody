@@ -6,10 +6,13 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 
 	"../chord"
 	network "../common"
 )
+
+const RpcTimeout = 5 * time.Second
 
 type HashTableNode struct {
 	id    string
@@ -78,7 +81,7 @@ func (hn *HashTableNode) Get(key string) interface{} {
 
 		add := hn.chord.Lookup(key)
 		reply := GetValueReply{}
-		ok := network.Call(add, "HashTableNode.GetValue", &args, &reply)
+		ok := network.Call(add, "HashTableNode.GetValue", &args, &reply, RpcTimeout)
 		if ok && reply.Success {
 			return reply.Value
 		}
@@ -107,7 +110,7 @@ func (hn *HashTableNode) Put(key string, value interface{}) bool {
 
 		add := hn.chord.Lookup(key)
 		reply := PutValueReply{}
-		ok := network.Call(add, "HashTableNode.PutValue", &args, &reply)
+		ok := network.Call(add, "HashTableNode.PutValue", &args, &reply, RpcTimeout)
 		if ok && reply.Success {
 			return true
 		}
