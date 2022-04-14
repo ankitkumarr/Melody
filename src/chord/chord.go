@@ -6,6 +6,8 @@ import (
 	"sync"
 
 	network "../common"
+	"sync/atomic"
+	"time"
 )
 
 // const (
@@ -23,7 +25,8 @@ type Node struct {
 	finger      []NodeInfo // finger table
 	successor   NodeInfo   // list of r successors, see sec E.3 of chord paper
 	predecessor NodeInfo
-	next        int // used for fixing finger table, see fix_fingers() in Fig 6 of chord paper
+	next        int   // used for fixing finger table, see fix_fingers() in Fig 6 of chord paper
+	dead        int32 // set by Kill()
 }
 
 // for storing info of other nodes
@@ -38,6 +41,16 @@ type RPCReply struct {
 	Id   int
 	// Err  Err
 	Success bool
+}
+
+func (n *Node) Kill() {
+	atomic.StoreInt32(&n.dead, 1)
+	// Your code here, if desired.
+}
+
+func (n *Node) killed() bool {
+	z := atomic.LoadInt32(&n.dead)
+	return z == 1
 }
 
 // create a new chord ring
@@ -127,25 +140,28 @@ func (n *Node) GetPredecessor(args *NodeInfo, reply *RPCReply) {
 	return
 }
 
-func (n *Node) stabilize() {
-	var args NodeInfo
-	var reply RPCReply
-	n.mu.Lock()
-	successor_addr := n.successor.Addr
-	n.mu.Unlock()
-	ok := network.Call(successor_addr, "Node.GetPredecessor", args, reply)
-	if ok {
-		n.mu.Lock()
-		if reply.Id > n.me && reply.Id < n.successor.Id {
-			n.successor.Addr = reply.Addr
-			n.successor.Id = reply.Id
-		}
-		successor_addr := n.successor.Addr
-		args.Addr = n.addr
-		args.Id = n.me
-		n.mu.Unlock()
+func (n *Node) stabilize_ticker() {
+	for !n.killed() {
+		var args NodeInfo
 		var reply RPCReply
-		_ = network.Call(successor_addr, "Node.Notify", args, reply)
+		n.mu.Lock()
+		successor_addr := n.successor.Addr
+		n.mu.Unlock()
+		ok := network.Call(successor_addr, "Node.GetPredecessor", args, reply)
+		if ok {
+			n.mu.Lock()
+			if reply.Id > n.me && reply.Id < n.successor.Id {
+				n.successor.Addr = reply.Addr
+				n.successor.Id = reply.Id
+			}
+			successor_addr := n.successor.Addr
+			args.Addr = n.addr
+			args.Id = n.me
+			n.mu.Unlock()
+			var reply RPCReply
+			_ = network.Call(successor_addr, "Node.Notify", args, reply)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -160,21 +176,49 @@ func (n *Node) Notify(args *NodeInfo, reply *RPCReply) {
 	return
 }
 
-func (n *Node) fix_fingers() {
-	var args NodeInfo
-	var reply RPCReply
-	n.mu.Lock()
-	n.next++
-	if n.next >= len(n.finger) {
-		n.next = 0
+func (n *Node) fix_fingers_ticker() {
+	for !n.killed() {
+		var args NodeInfo
+		var reply RPCReply
+		n.mu.Lock()
+		n.next++
+		if n.next >= len(n.finger) {
+			n.next = 0
+		}
+		args.Id = (n.me + int(math.Pow(2, float64(n.next)))) % int(math.Pow(2, float64(len(n.finger))))
+		n.mu.Unlock()
+		n.FindSuccessor(&args, &reply)
+		n.mu.Lock()
+		n.finger[n.next].Addr = reply.Addr
+		n.finger[n.next].Id = reply.Id
+		n.mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
 	}
-	args.Id = (n.me + int(math.Pow(2, float64(n.next)))) % int(math.Pow(2, float64(len(n.finger))))
-	n.mu.Unlock()
-	n.FindSuccessor(&args, &reply)
-	n.mu.Lock()
-	n.finger[n.next].Addr = reply.Addr
-	n.finger[n.next].Id = reply.Id
-	n.mu.Unlock()
+}
+
+// go routine that calls predecessor periodically to check if it has failed
+func (n *Node) check_predecessor_ticker() {
+	for !n.killed() {
+		n.mu.Lock()
+		pred_addr := n.predecessor.Addr
+		n.mu.Unlock()
+		if pred_addr != "" {
+			var args NodeInfo
+			var reply RPCReply
+			ok := call(pred_addr, "Node.Alive", &args, &reply)
+			n.mu.Lock()
+			if !(ok && reply.Success) {
+				var null_node NodeInfo
+				n.predecessor = null_node
+			}
+			n.mu.Unlock()
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func (n *Node) Alive(args *NodeInfo, reply *RPCReply) {
+	reply.Success = true
 }
 
 //
