@@ -5,9 +5,10 @@ import (
 	"net/rpc"
 	"sync"
 
-	network "../common"
 	"sync/atomic"
 	"time"
+
+	network "../common"
 )
 
 // const (
@@ -205,7 +206,7 @@ func (n *Node) check_predecessor_ticker() {
 		if pred_addr != "" {
 			var args NodeInfo
 			var reply RPCReply
-			ok := call(pred_addr, "Node.Alive", &args, &reply)
+			ok := network.Call(pred_addr, "Node.Alive", &args, &reply)
 			n.mu.Lock()
 			if !(ok && reply.Success) {
 				var null_node NodeInfo
