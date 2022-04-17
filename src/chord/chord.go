@@ -3,12 +3,13 @@ package chord
 import (
 	"math"
 	"net/rpc"
+	"strconv"
 	"sync"
 	"time"
 
 	"sync/atomic"
 
-	network "../common"
+	network "Melody/common"
 )
 
 const RpcTimeout = 5 * time.Second
@@ -242,9 +243,15 @@ func (n *Node) Alive(args *NodeInfo, reply *RPCReply) {
 //
 // Lookup a given key in the chord ring
 // Returns the Ip address of the chord server with the key
+// and the id of the server for debugging
 //
-func (n *Node) Lookup(key string) string {
-	return ""
+func (n *Node) Lookup(key string) (string, int) {
+	keyN, _ := strconv.Atoi(key)
+	var args NodeInfo
+	var reply RPCReply
+	args.Id = keyN
+	n.FindSuccessor(&args, &reply)
+	return reply.Addr, reply.Id
 }
 
 //
