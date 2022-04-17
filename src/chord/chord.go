@@ -56,17 +56,31 @@ func (n *Node) killed() bool {
 	return z == 1
 }
 
+// initialize a new chord node
+func Make(me int, addr string, createRing bool, joinNodeId int, joinNodeAddr string) *Node {
+	n := &Node{}
+	n.me = me
+	n.addr = addr
+	rpc.Register(n)
+	if createRing {
+		n.Create()
+	} else if joinNodeId >= 0 {
+		joinNode := &NodeInfo{}
+		joinNode.Addr = joinNodeAddr
+		joinNode.Id = joinNodeId
+		n.Join(joinNode)
+	}
+	return n
+}
+
 // create a new chord ring
-func (n *Node) Create(address string) {
+func (n *Node) Create() {
 	// clear the predecessor
 	var n_pred NodeInfo
 	n.predecessor = n_pred
-	n.addr = address
 
 	n.successor.Addr = n.addr
 	n.successor.Id = n.me
-
-	rpc.Register(n)
 }
 
 func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) {
@@ -112,7 +126,7 @@ func (n *Node) closest_preceding_node(id int) NodeInfo {
 }
 
 // join a chord ring containing n_current
-func (n *Node) join(n_current *NodeInfo) {
+func (n *Node) Join(n_current *NodeInfo) {
 	n.mu.Lock()
 	var n_pred NodeInfo
 	n.predecessor = n_pred
@@ -168,6 +182,7 @@ func (n *Node) stabilize_ticker() {
 	}
 }
 
+// to accomodate successor lists, should return list of successors
 func (n *Node) Notify(args *NodeInfo, reply *RPCReply) {
 	n.mu.Lock()
 	if (n.predecessor.Addr == "") || (args.Id > n.predecessor.Id && args.Id < n.me) {
