@@ -26,8 +26,8 @@ func httpServer(port string) {
 }
 
 func TestChordBasic(t *testing.T) {
-	m := 4
-	n_nodes := 5
+	m := 5
+	n_nodes := 15
 	ring_size := int(math.Pow(2, float64(m)))
 	a := make([]int, ring_size)
 	for i := 0; i < ring_size; i++ {
@@ -40,7 +40,7 @@ func TestChordBasic(t *testing.T) {
 	chord_nodes := make([]*Node, n_nodes)
 	for i := 0; i < n_nodes; i++ {
 		log.Printf("starting node %v\n", i)
-		addr := "127.0.0.1:" + strconv.Itoa(7000+ids[i])
+		addr := "127.0.0.1:" + strconv.Itoa(8000+ids[i])
 		// httpServer(addr)
 		if i == 0 {
 			n_new := Make(ids[i], addr, m-1, true, -1, "")
@@ -50,7 +50,44 @@ func TestChordBasic(t *testing.T) {
 			chord_nodes[i] = n_new
 		}
 		// wait for create or join to complete
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
+		if i > 0 {
+			for {
+				cont := true
+				preds := make([]int, i+1)
+				sucs := make([]int, i+1)
+				pred_counts := make(map[int]int)
+				suc_counts := make(map[int]int)
+				for j, node := range chord_nodes[:(i + 1)] {
+					node.mu.Lock()
+					preds[j] = node.predecessor.Id
+					sucs[j] = node.successor.Id
+					node.mu.Unlock()
+					if preds[j] == -1 {
+						cont = false
+					}
+					_, ok := pred_counts[preds[j]]
+					if ok {
+						cont = false
+					} else {
+						pred_counts[preds[j]] = 1
+					}
+
+					_, ok = suc_counts[sucs[j]]
+					if ok {
+						cont = false
+					} else {
+						suc_counts[sucs[j]] = 1
+					}
+				}
+				if cont {
+					log.Printf("chord has stabilized, current ring %v, current predecessors %v, current successors %v", ids[:(i+1)], preds, sucs)
+					break
+				}
+				log.Printf("chord still waiting to stabilize, current ring %v, current predecessors %v, current successors %v", ids[:(i+1)], preds, sucs)
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
 
 		log.Printf("current chord ring contains %v\n", ids[:(i+1)])
 		log.Printf("shuffled list is %v\n", a)
@@ -60,7 +97,7 @@ func TestChordBasic(t *testing.T) {
 			query_node := rand.Intn(i + 1)
 			keyN := rand.Intn(ring_size)
 			key := strconv.Itoa(keyN)
-			// log.Printf("iteration %v, # %v, key value %v\n", i, j, keyN)
+			log.Printf("iteration %v, # %v, key value %v\n", i, j, keyN)
 			_, suc_id := chord_nodes[query_node].Lookup(key)
 
 			if i == 0 {
@@ -71,8 +108,11 @@ func TestChordBasic(t *testing.T) {
 				// find the successor of key manually
 				min := ids[0]
 				suc := ring_size
-				for id := range ids {
-					if id > keyN && id < suc {
+				cur_ring := ids[:(i + 1)]
+				// log.Printf("finding valid successor for key %v, cur ring %v\n", keyN, cur_ring)
+				for _, id := range cur_ring {
+					// log.Printf("node %d\n", id)
+					if id >= keyN && id < suc {
 						suc = id
 					}
 					if id < min {
@@ -85,6 +125,7 @@ func TestChordBasic(t *testing.T) {
 				if suc != suc_id {
 					log.Fatalf("Lookup for key %v failed: current id list %v, returned id %v, should have returned %v\n", keyN, ids[:(i+1)], suc_id, suc)
 				}
+				log.Printf("Lookup for key %v: current id list %v, returned id %v, should have returned %v\n", keyN, ids[:(i+1)], suc_id, suc)
 			}
 		}
 	}
