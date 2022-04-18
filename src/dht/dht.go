@@ -8,8 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"../chord"
-	network "../common"
+	"Melody/chord"
+
+	network "Melody/common"
 )
 
 const RpcTimeout = 5 * time.Second

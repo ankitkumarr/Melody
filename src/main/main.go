@@ -7,9 +7,9 @@ import (
 	"net/rpc"
 	"os"
 
-	"../chord"
-	"../dht"
-	"../melody"
+	"Melody/chord"
+	"Melody/dht"
+	"Melody/melody"
 )
 
 func main() {
