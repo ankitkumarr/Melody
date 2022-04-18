@@ -5,7 +5,7 @@ import (
 	"log"
 	"strings"
 
-	"../dht"
+	"Melody/dht"
 )
 
 const KeywordPrefix = "__KEYWORD__"

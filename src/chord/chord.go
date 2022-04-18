@@ -1,7 +1,10 @@
 package chord
 
 import (
+	"fmt"
+	"log"
 	"math"
+	"net"
 	"net/rpc"
 	"strconv"
 	"sync"
@@ -13,6 +16,39 @@ import (
 )
 
 const RpcTimeout = 5 * time.Second
+
+type LogsTopic string
+
+const (
+	dFinds      LogsTopic = "FINDS"
+	dClosestp   LogsTopic = "ClSPRE"
+	dCreate     LogsTopic = "CRET"
+	dJoin       LogsTopic = "JOIN"
+	dStable     LogsTopic = "STAB"
+	dNotify     LogsTopic = "NOTE"
+	dFixFingers LogsTopic = "FIXF"
+	dCheckPred  LogsTopic = "CHKP"
+)
+
+var debugStart time.Time
+var debugVerbosity int
+
+func init() {
+	debugVerbosity = 1
+	debugStart = time.Now()
+
+	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
+}
+
+func debug_print(topic LogsTopic, format string, a ...interface{}) {
+	if debugVerbosity > 0 {
+		time := time.Since(debugStart).Microseconds()
+		time /= 100
+		prefix := fmt.Sprintf("%06d %v ", time, string(topic))
+		format = prefix + format
+		log.Printf(format, a...)
+	}
+}
 
 // const (
 // 	OK      = "OK"
@@ -31,6 +67,7 @@ type Node struct {
 	predecessor NodeInfo
 	next        int   // used for fixing finger table, see fix_fingers() in Fig 6 of chord paper
 	dead        int32 // set by Kill()
+	ring_size   int   // length of the ring, 2 ** (len(finger) + 1)
 }
 
 // for storing info of other nodes
@@ -58,40 +95,73 @@ func (n *Node) killed() bool {
 }
 
 // initialize a new chord node
-func Make(me int, addr string, createRing bool, joinNodeId int, joinNodeAddr string) *Node {
+func Make(me int, addr string, m int, createRing bool, joinNodeId int, joinNodeAddr string) *Node {
 	n := &Node{}
 	n.me = me
 	n.addr = addr
+	n.finger = make([]NodeInfo, m)
+	n.ring_size = int(math.Pow(2, float64(m+1)))
+	newServer := rpc.NewServer()
 	rpc.Register(n)
+	l, e := net.Listen("tcp", addr)
+	if e != nil {
+		log.Fatal("listen error:", e)
+	}
+	go newServer.Accept(l)
+
 	if createRing {
 		n.Create()
 	} else if joinNodeId >= 0 {
+		debug_print(dJoin, "N%d just created, joining ring", me)
 		joinNode := &NodeInfo{}
 		joinNode.Addr = joinNodeAddr
 		joinNode.Id = joinNodeId
+		debug_print(dJoin, "N%d actually joining ring", me)
 		n.Join(joinNode)
 	}
+	go n.stabilize_ticker()
+	go n.check_predecessor_ticker()
+	go n.fix_fingers_ticker()
 	return n
+}
+
+func isInRange(start int, end int, ind int) bool {
+	if end >= start {
+		if start <= ind && ind <= end {
+			return true
+		} else {
+			return false
+		}
+	} else {
+		if ind <= end || ind >= start {
+			return true
+		} else {
+			return false
+		}
+	}
 }
 
 // create a new chord ring
 func (n *Node) Create() {
 	// clear the predecessor
-	var n_pred NodeInfo
-	n.predecessor = n_pred
+	n.mu.Lock()
+	n.predecessor = NodeInfo{}
 
 	n.successor.Addr = n.addr
 	n.successor.Id = n.me
+	debug_print(dCreate, "N%d just created ring", n.me)
+	n.mu.Unlock()
 }
 
-func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) {
+func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) error {
 	n.mu.Lock()
-	if args.Id > n.me && args.Id <= n.successor.Id {
+	isSuccessor := isInRange(n.me+1, n.successor.Id, args.Id)
+	if isSuccessor {
 		reply.Addr = n.successor.Addr
 		reply.Id = n.successor.Id
 		reply.Success = true
 		defer n.mu.Unlock()
-		return
+		return nil
 	} else {
 		n_preced := n.closest_preceding_node(args.Id)
 		n.mu.Unlock()
@@ -104,7 +174,7 @@ func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) {
 				reply.Addr = reply_inner.Addr
 				reply.Id = reply_inner.Id
 				reply.Success = true
-				return
+				return nil
 			}
 		}
 	}
@@ -129,13 +199,14 @@ func (n *Node) closest_preceding_node(id int) NodeInfo {
 // join a chord ring containing n_current
 func (n *Node) Join(n_current *NodeInfo) {
 	n.mu.Lock()
-	var n_pred NodeInfo
-	n.predecessor = n_pred
-	var args *NodeInfo
+	debug_print(dJoin, "N%d just started join, calling N%d", n.me, n_current.Id)
+	n.predecessor = NodeInfo{}
+	var args NodeInfo
 	args.Id = n.me
 	args.Addr = n.addr
 	n.mu.Unlock()
 
+	debug_print(dJoin, "N9 waiting for reply from N%d", n_current.Id)
 	for {
 		var reply RPCReply
 		ok := network.Call(n_current.Addr, "Node.FindSuccessor", &args, &reply, RpcTimeout)
@@ -149,50 +220,61 @@ func (n *Node) Join(n_current *NodeInfo) {
 	}
 }
 
-func (n *Node) GetPredecessor(args *NodeInfo, reply *RPCReply) {
+func (n *Node) GetPredecessor(args *NodeInfo, reply *RPCReply) error {
 	n.mu.Lock()
 	reply.Addr = n.predecessor.Addr
 	reply.Id = n.predecessor.Id
 	reply.Success = true
-	defer n.mu.Unlock()
-	return
+	n.mu.Unlock()
+	return nil
 }
 
 func (n *Node) stabilize_ticker() {
 	for !n.killed() {
-		var args NodeInfo
-		var reply RPCReply
 		n.mu.Lock()
-		successor_addr := n.successor.Addr
+		onlyNode := n.successor.Id == n.me
 		n.mu.Unlock()
-		ok := network.Call(successor_addr, "Node.GetPredecessor", args, reply, RpcTimeout)
-		if ok {
-			n.mu.Lock()
-			if reply.Id > n.me && reply.Id < n.successor.Id {
-				n.successor.Addr = reply.Addr
-				n.successor.Id = reply.Id
-			}
-			successor_addr := n.successor.Addr
-			args.Addr = n.addr
-			args.Id = n.me
-			n.mu.Unlock()
+		if !onlyNode {
+			var args NodeInfo
 			var reply RPCReply
-			_ = network.Call(successor_addr, "Node.Notify", args, reply, RpcTimeout)
+			n.mu.Lock()
+			successor_addr := n.successor.Addr
+			n.mu.Unlock()
+			ok := network.Call(successor_addr, "Node.GetPredecessor", args, reply, RpcTimeout)
+			if ok {
+				n.mu.Lock()
+				if reply.Id > n.me && reply.Id < n.successor.Id {
+					n.successor.Addr = reply.Addr
+					n.successor.Id = reply.Id
+				}
+				successor_addr := n.successor.Addr
+				args.Addr = n.addr
+				args.Id = n.me
+				n.mu.Unlock()
+				var reply RPCReply
+				_ = network.Call(successor_addr, "Node.Notify", args, reply, RpcTimeout)
+			}
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 }
 
 // to accomodate successor lists, should return list of successors
-func (n *Node) Notify(args *NodeInfo, reply *RPCReply) {
+func (n *Node) Notify(args *NodeInfo, reply *RPCReply) error {
 	n.mu.Lock()
-	if (n.predecessor.Addr == "") || (args.Id > n.predecessor.Id && args.Id < n.me) {
+	if n.successor.Id == n.me {
+		n.predecessor.Addr = args.Addr
+		n.predecessor.Id = args.Id
+
+		n.successor.Addr = args.Addr
+		n.successor.Id = args.Id
+	} else if (n.predecessor.Addr == "") || (args.Id > n.predecessor.Id && args.Id < n.me) {
 		n.predecessor.Addr = args.Addr
 		n.predecessor.Id = args.Id
 	}
 	reply.Success = true
 	defer n.mu.Unlock()
-	return
+	return nil
 }
 
 func (n *Node) fix_fingers_ticker() {
@@ -204,7 +286,10 @@ func (n *Node) fix_fingers_ticker() {
 		if n.next >= len(n.finger) {
 			n.next = 0
 		}
-		args.Id = (n.me + int(math.Pow(2, float64(n.next)))) % int(math.Pow(2, float64(len(n.finger))))
+		args.Id = (n.me + int(math.Pow(2, float64(n.next)))) % n.ring_size
+		if args.Id < 0 {
+			args.Id += n.ring_size
+		}
 		n.mu.Unlock()
 		n.FindSuccessor(&args, &reply)
 		n.mu.Lock()
@@ -236,8 +321,9 @@ func (n *Node) check_predecessor_ticker() {
 	}
 }
 
-func (n *Node) Alive(args *NodeInfo, reply *RPCReply) {
+func (n *Node) Alive(args *NodeInfo, reply *RPCReply) error {
 	reply.Success = true
+	return nil
 }
 
 //
@@ -250,6 +336,10 @@ func (n *Node) Lookup(key string) (string, int) {
 	var args NodeInfo
 	var reply RPCReply
 	args.Id = keyN
+	n.mu.Lock()
+	debug_print(dFinds, "N%d in lookup, about to call findsuccessor", n.me)
+	n.mu.Unlock()
+
 	n.FindSuccessor(&args, &reply)
 	return reply.Addr, reply.Id
 }
