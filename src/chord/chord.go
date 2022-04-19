@@ -1,12 +1,12 @@
 package chord
 
 import (
+	"Melody/common"
 	"fmt"
 	"log"
 	"math"
-	"net"
-	"net/http"
 	"net/rpc"
+	"strconv"
 	"sync"
 	"time"
 
@@ -32,7 +32,7 @@ var debugStart time.Time
 var debugVerbosity int
 
 func init() {
-	debugVerbosity = 1
+	debugVerbosity = 0
 	debugStart = time.Now()
 
 	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
@@ -104,14 +104,6 @@ func Make(me int, addr string, m int, createRing bool, joinNodeId int, joinNodeA
 	rpcPath := "/_goRPC_" + strconv.Itoa(me)
 	debugPath := "/debug/rpc_" + strconv.Itoa(me)
 	newServer.HandleHTTP(rpcPath, debugPath)
-	l, e := net.Listen("tcp", addr)
-	if e != nil {
-		log.Fatal("listen error:", e)
-	}
-	// go http.Serve(l, nil)
-	var httpServer http.Server
-	go httpServer.Serve(l)
-
 	if createRing {
 		n.Create()
 	} else if joinNodeId >= 0 {
@@ -201,7 +193,7 @@ func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) error {
 		for {
 			var reply_inner *NodeInfo
 			rpcPath := "/_goRPC_" + strconv.Itoa(n_preced.Id)
-			ok := Call(n_preced.Addr, rpcPath, "Node.FindSuccessor", &args, &reply_inner, RpcTimeout)
+			ok := common.Call(n_preced.Addr, rpcPath, "Node.FindSuccessor", &args, &reply_inner, RpcTimeout)
 			if ok {
 				reply.Addr = reply_inner.Addr
 				reply.Id = reply_inner.Id
@@ -258,7 +250,7 @@ func (n *Node) Join(n_current *NodeInfo) {
 	for {
 		var reply RPCReply
 		rpcPath := "/_goRPC_" + strconv.Itoa(n_current.Id)
-		ok := Call(n_current.Addr, rpcPath, "Node.FindSuccessor", &args, &reply, RpcTimeout)
+		ok := common.Call(n_current.Addr, rpcPath, "Node.FindSuccessor", &args, &reply, RpcTimeout)
 		debug_print(dJoin, "received findsuccessor response, success? %v", ok)
 		if ok {
 			n.mu.Lock()
@@ -294,7 +286,7 @@ func (n *Node) stabilize_ticker() {
 			rpcPath := "/_goRPC_" + strconv.Itoa(n.successor.Id)
 			debug_print(dStable, "N%d in stabilize, calling suc N%d at addr %v to get suc.pred", n.me, n.successor.Id, n.successor.Addr)
 			n.mu.Unlock()
-			ok := Call(successor_addr, rpcPath, "Node.GetPredecessor", &args, &reply, RpcTimeout)
+			ok := common.Call(successor_addr, rpcPath, "Node.GetPredecessor", &args, &reply, RpcTimeout)
 			if ok {
 				n.mu.Lock()
 				if reply.Addr != "" {
@@ -312,7 +304,7 @@ func (n *Node) stabilize_ticker() {
 				debug_print(dStable, "N%d in stabilize, calling notify to suc N%d", n.me, n.successor.Id)
 				n.mu.Unlock()
 				var reply RPCReply
-				_ = Call(successor_addr, rpcPath, "Node.Notify", &args, &reply, RpcTimeout)
+				_ = common.Call(successor_addr, rpcPath, "Node.Notify", &args, &reply, RpcTimeout)
 			}
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -367,7 +359,7 @@ func (n *Node) check_predecessor_ticker() {
 		if pred_addr != "" {
 			var args NodeInfo
 			var reply RPCReply
-			ok := Call(pred_addr, rpcPath, "Node.Alive", &args, &reply, RpcTimeout)
+			ok := common.Call(pred_addr, rpcPath, "Node.Alive", &args, &reply, RpcTimeout)
 			n.mu.Lock()
 			if !(ok && reply.Success) {
 				var null_node NodeInfo
@@ -407,36 +399,4 @@ func (n *Node) Lookup(key int) (string, int) {
 //
 func (n *Node) IsMyKey(key int) bool {
 	return false
-}
-
-func Call(address string, path string, rpcname string, args interface{}, reply interface{}, timeout time.Duration) bool {
-	callCh := make(chan bool, 1)
-
-	go call(address, path, rpcname, args, reply, callCh)
-
-	select {
-	case <-time.After(timeout):
-		return false
-	case ok := <-callCh:
-		return ok
-	}
-}
-
-func call(address string, path string, rpcname string, args interface{}, reply interface{}, ch chan bool) {
-	// log.Printf("about to call addr %v, rpc %v, args %v, reply %v\n", address, rpcname, args, reply)
-	c, err := rpc.DialHTTPPath("tcp", address, path)
-	// log.Printf("just called, err %v", err)
-	if err != nil {
-		log.Fatalf("Failed to connect to server with address: %v. %v", address, err)
-	}
-	defer c.Close()
-
-	err = c.Call(rpcname, args, reply)
-	if err == nil {
-		ch <- true
-	} else {
-		// fmt.Println(err)
-		log.Printf("called addr %v, rpc %v, with args %v, reply %v, err %v", address, rpcname, args, reply, err)
-		ch <- false
-	}
 }
