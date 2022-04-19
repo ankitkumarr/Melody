@@ -42,7 +42,7 @@ fi
 
 # Attempt get from the third server
 response=$(curl "localhost:8003/dhtget?key=foo")
-echo response
+echo $response
 if [[ $response != "Retrieved value for key foo: bar" ]] ; then
     echo "GET failed"
     kill ${pid[0]} ${pid[1]} ${pid[2]}; exit 1
@@ -50,5 +50,7 @@ if [[ $response != "Retrieved value for key foo: bar" ]] ; then
 fi
 
 echo "TEST PASSED!"
-echo "Press Ctrl C to exit..."
-wait $pid
+rm -f ./main
+kill ${pid[0]} ${pid[1]} ${pid[2]}
+# echo "Press Ctrl C to exit..."
+# wait $pid
