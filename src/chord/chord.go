@@ -98,7 +98,7 @@ func Make(me int, addr string, m int, createRing bool, joinNodeId int, joinNodeA
 	n.me = me
 	n.addr = addr
 	n.finger = make([]NodeInfo, m)
-	n.ring_size = int(math.Pow(2, float64(m+1)))
+	n.ring_size = int(math.Pow(2, float64(m)))
 	newServer := rpc.NewServer()
 	newServer.Register(n)
 	rpcPath := "/_goRPC_" + strconv.Itoa(me)
@@ -116,7 +116,7 @@ func Make(me int, addr string, m int, createRing bool, joinNodeId int, joinNodeA
 	}
 	go n.stabilize_ticker()
 	// go n.check_predecessor_ticker()
-	// go n.fix_fingers_ticker()
+	go n.fix_fingers_ticker()
 	return n
 }
 
@@ -148,17 +148,12 @@ func isInRange(start int, end int, ind int, length int) bool {
 	}
 }
 
-// check if end - start = 1, mod length
+// check if end - start != 1, mod length
 // need this because sometimes we need the range (start, end)
-// if end-start = 1, this will mess up the usage of isInRange
-// func isDiffOne(start int, end int, length int) bool {
-// 	diff := (end - start) % length
-// 	if diff == 1 || diff == length-1 {
-// 		return true
-// 	} else {
-// 		return false
-// 	}
-// }
+// then if end - start = 1, this range is empty and will mess up the usage of isInRange
+func diffNotOne(start int, end int, length int) bool {
+	return (end-start != 1) && !(start == length-1 && end == 0)
+}
 
 // create a new chord ring
 func (n *Node) Create() {
@@ -208,24 +203,19 @@ func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) error {
 // assume lock is held when called
 func (n *Node) closest_preceding_node(id int) NodeInfo {
 	var n_preced NodeInfo
-	// for i := len(n.finger) - 1; i >= 0; i-- {
-	// 	if n.finger[i].Addr != "" && n.finger[i].Id < id {
-	// 		n_preced.Addr = n.finger[i].Addr
-	// 		n_preced.Id = n.finger[i].Id
-	// 		return n_preced
-	// 	}
-	// }
-	// for i := len(n.finger) - 1; i >= 0; i-- {
-	// 	if n.finger[i].Addr != "" {
-	// 		is_pred := isInRange(n.me+1, id-1, n.finger[i].Id, n.ring_size) && !isDiffOne(n.me, id, n.ring_size)
-	// 		if is_pred {
-	// 			n_preced.Addr = n.finger[i].Addr
-	// 			n_preced.Id = n.finger[i].Id
-	// 			return n_preced
-	// 		}
-	// 	}
-	// }
-	is_pred := isInRange(n.me+1, id-1, n.successor.Id, n.ring_size) && (id-n.me != 1) && !(n.me == n.ring_size-1 && n.successor.Id == 0)
+	for i := len(n.finger) - 1; i >= 0; i-- {
+		if n.finger[i].Addr != "" {
+			is_pred := isInRange(n.me+1, id-1, n.finger[i].Id, n.ring_size) && diffNotOne(n.me, id, n.ring_size)
+			if is_pred {
+				n_preced.Addr = n.finger[i].Addr
+				n_preced.Id = n.finger[i].Id
+				debug_print(dClosestp, "N%d actually using finger table! returning n + 2 ** %d at index N%d", n.me, i, n_preced.Id)
+				return n_preced
+			}
+		}
+	}
+	is_pred := isInRange(n.me+1, id-1, n.successor.Id, n.ring_size) && diffNotOne(n.me, id, n.ring_size)
+	// (id-n.me != 1) && !(n.me == n.ring_size-1 && n.successor.Id == 0)
 	if is_pred {
 		n_preced.Addr = n.successor.Addr
 		n_preced.Id = n.successor.Id
@@ -290,7 +280,8 @@ func (n *Node) stabilize_ticker() {
 			if ok {
 				n.mu.Lock()
 				if reply.Addr != "" {
-					is_suc := isInRange(n.me+1, n.successor.Id-1, reply.Id, n.ring_size) && (n.successor.Id-n.me != 1) && !(n.me == n.ring_size-1 && n.successor.Id == 0)
+					is_suc := isInRange(n.me+1, n.successor.Id-1, reply.Id, n.ring_size) && diffNotOne(n.me, n.successor.Id, n.ring_size)
+					// (n.successor.Id-n.me != 1) && !(n.me == n.ring_size-1 && n.successor.Id == 0)
 					if is_suc {
 						debug_print(dStable, "N%d in stabilize, prev suc is N%d, but suc.pred is N%d, so will change successor", n.me, n.successor.Id, reply.Id)
 						n.successor.Addr = reply.Addr
@@ -315,7 +306,8 @@ func (n *Node) stabilize_ticker() {
 func (n *Node) Notify(args *NodeInfo, reply *RPCReply) error {
 	n.mu.Lock()
 	debug_print(dNotify, "N%d received notify from N%d, cur pred is %d", n.me, args.Id, n.predecessor.Id)
-	is_pred := isInRange(n.predecessor.Id+1, n.me-1, args.Id, n.ring_size) && (n.me-n.predecessor.Id != 1) && !(n.predecessor.Id == n.ring_size-1 && n.me == 0)
+	is_pred := isInRange(n.predecessor.Id+1, n.me-1, args.Id, n.ring_size) && diffNotOne(n.predecessor.Id, n.me, n.ring_size)
+	// (n.me-n.predecessor.Id != 1) && !(n.predecessor.Id == n.ring_size-1 && n.me == 0)
 	if (n.predecessor.Id < 0) || is_pred {
 		n.predecessor.Addr = args.Addr
 		n.predecessor.Id = args.Id
@@ -339,13 +331,20 @@ func (n *Node) fix_fingers_ticker() {
 		if args.Id < 0 {
 			args.Id += n.ring_size
 		}
+		debug_print(dFixFingers, "N%d in fixfingers, about to look for finger %d at index %d", n.me, n.next, args.Id)
 		n.mu.Unlock()
 		n.FindSuccessor(&args, &reply)
 		n.mu.Lock()
 		n.finger[n.next].Addr = reply.Addr
 		n.finger[n.next].Id = reply.Id
+		debug_print(dFixFingers, "N%d in fixfingers, found finger %d at index %d, successor is N%d", n.me, n.next, args.Id, reply.Id)
+		longerSleep := n.next == 0
 		n.mu.Unlock()
-		time.Sleep(5 * time.Millisecond)
+		if longerSleep {
+			time.Sleep(50 * time.Millisecond)
+		} else {
+			time.Sleep(5 * time.Millisecond)
+		}
 	}
 }
 
