@@ -1,4 +1,4 @@
-package network
+package common
 
 import (
 	"fmt"
@@ -11,10 +11,10 @@ import (
 // send an RPC request to the given address, wait for the response.
 // returns false if something goes wrong.
 //
-func Call(address string, rpcname string, args interface{}, reply interface{}, timeout time.Duration) bool {
+func Call(address string, path string, rpcname string, args interface{}, reply interface{}, timeout time.Duration) bool {
 	callCh := make(chan bool, 1)
 
-	go call(address, rpcname, args, reply, callCh)
+	go call(address, path, rpcname, args, reply, callCh)
 
 	select {
 	case <-time.After(timeout):
@@ -24,8 +24,8 @@ func Call(address string, rpcname string, args interface{}, reply interface{}, t
 	}
 }
 
-func call(address string, rpcname string, args interface{}, reply interface{}, ch chan bool) {
-	c, err := rpc.DialHTTP("tcp", address)
+func call(address string, path string, rpcname string, args interface{}, reply interface{}, ch chan bool) {
+	c, err := rpc.DialHTTPPath("tcp", address, path)
 	if err != nil {
 		log.Fatalf("Failed to connect to server with address: %v. %v", address, err)
 	}
@@ -34,8 +34,8 @@ func call(address string, rpcname string, args interface{}, reply interface{}, c
 	err = c.Call(rpcname, args, reply)
 	if err == nil {
 		ch <- true
+	} else {
+		fmt.Println(err)
+		ch <- false
 	}
-
-	fmt.Println(err)
-	ch <- false
 }

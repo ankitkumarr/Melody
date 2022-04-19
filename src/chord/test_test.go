@@ -6,24 +6,10 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
-	"net/rpc"
 	"strconv"
 	"testing"
 	"time"
 )
-
-func httpServer(port string) {
-	// TODO: All the rpc struct need to be registered with rpc.Register(...)
-	// mux := http.NewServeMux()
-	// mux.Handler("/request", requesthandler)
-	// http.ListenAndServe(":9000", nil)
-	rpc.HandleHTTP()
-	l, e := net.Listen("tcp", port)
-	if e != nil {
-		log.Fatal("listen error:", e)
-	}
-	go http.Serve(l, nil)
-}
 
 func TestChordBasic(t *testing.T) {
 	m := 5
@@ -44,9 +30,11 @@ func TestChordBasic(t *testing.T) {
 		// httpServer(addr)
 		if i == 0 {
 			n_new := Make(ids[i], addr, m-1, true, -1, "")
+			startNewServer(addr)
 			chord_nodes[i] = n_new
 		} else {
 			n_new := Make(ids[i], addr, m-1, false, ids[0], chord_nodes[0].addr)
+			startNewServer(addr)
 			chord_nodes[i] = n_new
 		}
 		// wait for create or join to complete
@@ -96,13 +84,12 @@ func TestChordBasic(t *testing.T) {
 		for j := 0; j < 5; j++ {
 			query_node := rand.Intn(i + 1)
 			keyN := rand.Intn(ring_size)
-			key := strconv.Itoa(keyN)
 			log.Printf("iteration %v, # %v, key value %v\n", i, j, keyN)
-			_, suc_id := chord_nodes[query_node].Lookup(key)
+			_, suc_id := chord_nodes[query_node].Lookup(keyN)
 
 			if i == 0 {
 				if suc_id != ids[0] {
-					log.Fatalf("Lookup for key %v failed: only have one node with id %v, returned id %v\n", key, ids[0], suc_id)
+					log.Fatalf("Lookup for key %v failed: only have one node with id %v, returned id %v\n", keyN, ids[0], suc_id)
 				}
 			} else {
 				// find the successor of key manually
@@ -130,4 +117,14 @@ func TestChordBasic(t *testing.T) {
 		}
 	}
 	log.Println("Test chord basic: success")
+}
+
+func startNewServer(addr string) {
+	l, e := net.Listen("tcp", addr)
+	if e != nil {
+		log.Fatal("listen error:", e)
+	}
+	// go http.Serve(l, nil)
+	var httpServer http.Server
+	go httpServer.Serve(l)
 }
