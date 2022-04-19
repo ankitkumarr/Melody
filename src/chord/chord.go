@@ -32,7 +32,7 @@ var debugStart time.Time
 var debugVerbosity int
 
 func init() {
-	debugVerbosity = 0
+	debugVerbosity = 1
 	debugStart = time.Now()
 
 	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
