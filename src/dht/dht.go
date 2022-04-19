@@ -10,6 +10,7 @@ import (
 
 	"Melody/chord"
 
+	hash "Melody/common"
 	network "Melody/common"
 )
 
@@ -70,7 +71,8 @@ func (hn *HashTableNode) Get(key string) interface{} {
 			return v
 		}
 
-		if hn.chord.IsMyKey(key) {
+		keyHashed := hash.KeyHash(key)
+		if hn.chord.IsMyKey(keyHashed) {
 			hn.mu.Unlock()
 			return nil
 		}
@@ -80,7 +82,7 @@ func (hn *HashTableNode) Get(key string) interface{} {
 		args.Id = strconv.Itoa(os.Getuid())
 		args.Key = key
 
-		add := hn.chord.Lookup(key)
+		add, _ := hn.chord.Lookup(keyHashed)
 		reply := GetValueReply{}
 		ok := network.Call(add, "HashTableNode.GetValue", &args, &reply, RpcTimeout)
 		if ok && reply.Success {
@@ -95,9 +97,10 @@ func (hn *HashTableNode) Get(key string) interface{} {
 func (hn *HashTableNode) Put(key string, value interface{}) bool {
 	// TODO: Currently this will infinitely attempt to find the key
 	// This needs to be fixed to know when key is not present, and only retry a specific number of iterations.
+	keyHashed := hash.KeyHash(key)
 	for {
 		hn.mu.Lock()
-		if _, ok := hn.data[key]; ok || hn.chord.IsMyKey(key) {
+		if _, ok := hn.data[key]; ok || hn.chord.IsMyKey(keyHashed) {
 			hn.data[key] = value
 			hn.mu.Unlock()
 			return true
@@ -109,7 +112,7 @@ func (hn *HashTableNode) Put(key string, value interface{}) bool {
 		args.Key = key
 		args.Value = value
 
-		add := hn.chord.Lookup(key)
+		add, _ := hn.chord.Lookup(keyHashed)
 		reply := PutValueReply{}
 		ok := network.Call(add, "HashTableNode.PutValue", &args, &reply, RpcTimeout)
 		if ok && reply.Success {
@@ -124,11 +127,12 @@ func (hn *HashTableNode) Put(key string, value interface{}) bool {
 func (hn *HashTableNode) GetValue(args *GetValueArgs, reply *GetValueReply) {
 	hn.mu.Lock()
 	defer hn.mu.Unlock()
+	keyHashed := hash.KeyHash(args.Key)
 	reply.Id = args.Id
 	if v, ok := hn.data[args.Key]; ok {
 		reply.Value = v
 		reply.Success = true
-	} else if hn.chord.IsMyKey(args.Key) {
+	} else if hn.chord.IsMyKey(keyHashed) {
 		// This means that even though I don't have the key,
 		// this key should be mine. So, we can return an empty response.
 		reply.Success = true
@@ -146,10 +150,11 @@ func (hn *HashTableNode) PutValue(args *PutValueArgs, reply *PutValueReply) {
 	hn.mu.Lock()
 	defer hn.mu.Unlock()
 	reply.Id = args.Id
+	keyHashed := hash.KeyHash(args.Key)
 	if _, ok := hn.data[args.Key]; ok {
 		hn.data[args.Key] = args.Value
 		reply.Success = true
-	} else if hn.chord.IsMyKey(args.Key) {
+	} else if hn.chord.IsMyKey(keyHashed) {
 		// This means that even though I don't have the key,
 		// this key should be mine.
 		hn.data[args.Key] = args.Value

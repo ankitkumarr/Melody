@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
-	"strconv"
 	"sync"
 	"time"
 
@@ -390,11 +389,10 @@ func (n *Node) Alive(args *NodeInfo, reply *RPCReply) error {
 // Returns the Ip address of the chord server with the key
 // and the id of the server for debugging
 //
-func (n *Node) Lookup(key string) (string, int) {
-	keyN, _ := strconv.Atoi(key)
+func (n *Node) Lookup(key int) (string, int) {
 	var args NodeInfo
 	var reply RPCReply
-	args.Id = keyN
+	args.Id = key
 	n.mu.Lock()
 	debug_print(dFinds, "N%d in lookup, about to call findsuccessor", n.me)
 	n.mu.Unlock()
@@ -407,7 +405,7 @@ func (n *Node) Lookup(key string) (string, int) {
 // Lets the caller know if this chord node is responsible for the
 // specific key.
 //
-func (n *Node) IsMyKey(key string) bool {
+func (n *Node) IsMyKey(key int) bool {
 	return false
 }
 
