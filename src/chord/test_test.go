@@ -13,7 +13,7 @@ import (
 
 func TestChordBasic(t *testing.T) {
 	m := 5
-	n_nodes := 15
+	n_nodes := 10
 	ring_size := int(math.Pow(2, float64(m)))
 	a := make([]int, ring_size)
 	for i := 0; i < ring_size; i++ {
@@ -29,11 +29,11 @@ func TestChordBasic(t *testing.T) {
 		addr := "127.0.0.1:" + strconv.Itoa(8000+ids[i])
 		// httpServer(addr)
 		if i == 0 {
-			n_new := Make(ids[i], addr, m-1, true, -1, "")
+			n_new := Make(ids[i], addr, m, true, -1, "")
 			startNewServer(addr)
 			chord_nodes[i] = n_new
 		} else {
-			n_new := Make(ids[i], addr, m-1, false, ids[0], chord_nodes[0].addr)
+			n_new := Make(ids[i], addr, m, false, ids[0], chord_nodes[0].addr)
 			startNewServer(addr)
 			chord_nodes[i] = n_new
 		}
