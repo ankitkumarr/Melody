@@ -2,6 +2,7 @@ package melody
 
 import (
 	"crypto/rand"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -33,6 +34,8 @@ func Make(dht *dht.HashTableNode, myAdd string) Melody {
 	m := Melody{}
 	m.dht = dht
 	m.address = myAdd
+	gob.Register(&FileMetadata{})
+	gob.Register([]FileMetadata{})
 	m.setupHttpRoutes()
 	return m
 }
@@ -57,7 +60,6 @@ func getFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := os.Stat(StoreDirectoryName + fileid); err == nil {
-		w.WriteHeader(http.StatusOK)
 		// Ideally this would be streamed to the client.
 		// However, loading in bytes in memory if ok for now for our prototype.
 		fileBytes, err := ioutil.ReadFile(StoreDirectoryName + fileid)
@@ -200,7 +202,7 @@ func (m *Melody) AddFileToIndex(f FileMetadata) {
 				files = append(files, f)
 				m.dht.Put(key, files)
 			} else {
-				log.Fatalf("Invalid data in DHT. Expected File Metadata for key %v.", key)
+				log.Fatalf("Invalid data in DHT. Expected File Metadata for key %v. Found %v", key, val)
 			}
 		}
 	}
@@ -219,7 +221,7 @@ func (m *Melody) LookupFiles(query string) []FileMetadata {
 			if files, ok := val.([]FileMetadata); ok {
 				results = append(results, files...)
 			} else {
-				log.Fatalf("Invalid data in DHT. Expected File Metadata for key %v.", key)
+				log.Fatalf("Invalid data in DHT. Expected File Metadata for key %v. Found %v", key, val)
 			}
 		}
 	}
