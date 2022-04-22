@@ -44,7 +44,7 @@ func main() {
 	// Create DHT and start chord here.
 	ch := chord.Make(chord_id, my_address, 10, create, joinNodeId, joinNodeAdd)
 	dht := dht.Make(ch, my_address)
-	melody.Make(dht)
+	melody.Make(dht, my_address)
 
 	httpServer(port)
 }
