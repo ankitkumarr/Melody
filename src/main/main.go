@@ -50,6 +50,7 @@ func main() {
 }
 
 func httpServer(port string) {
+	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 100
 	rpc.HandleHTTP()
 	l, e := net.Listen("tcp", "127.0.0.1:"+port)
 	if e != nil {

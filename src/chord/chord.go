@@ -298,7 +298,7 @@ func (n *Node) stabilize_ticker() {
 				_ = common.Call(successor_addr, rpcPath, "Node.Notify", &args, &reply, RpcTimeout)
 			}
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -343,7 +343,7 @@ func (n *Node) fix_fingers_ticker() {
 		if longerSleep {
 			time.Sleep(50 * time.Millisecond)
 		} else {
-			time.Sleep(5 * time.Millisecond)
+			time.Sleep(20 * time.Millisecond)
 		}
 	}
 }
@@ -366,7 +366,7 @@ func (n *Node) check_predecessor_ticker() {
 			}
 			n.mu.Unlock()
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
