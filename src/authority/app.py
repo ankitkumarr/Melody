@@ -1,5 +1,5 @@
-from flask import Flask, render_template, request, jsonify, make_response, abort, redirect
-import json, requests
+from flask import Flask, render_template, request, jsonify, make_response, abort, redirect, send_file
+import json, requests, io
 from melody_bridge import *
 
 app = Flask(__name__)
@@ -85,14 +85,46 @@ def playlists(playlist):
                 if viddata is None or "title" not in viddata:
                     error = f"No file for uuid {data['file_uuid']} exists in the Melody DHT."
                 else:
-                    database["playlists"][playlist]["videos"].append(viddata)
+                    vidindex = -1
+                    try:
+                        vidindex = database["file_uuid_list"].index(data["file_uuid"])
+                    except:
+                        database["file_uuid_list"].append(data["file_uuid"])
+                        vidindex = database["file_uuid_list"].index(data["file_uuid"])
+                    database["videos"][data["file_uuid"]] = viddata
+                    if vidindex in playlistdata["videos"]:
+                        error = "That video is already in this playlist!"
+                    else:
+                        database["playlists"][playlist]["videos"].append(vidindex)
                     save_database()
                     playlistdata = database["playlists"][playlist]
+        playlistdata = playlistdata.copy()
         playlistdata["title"] = playlist
         if len(playlistdata["videos"]) == 0:
-            del playlistdata["videos"]
-        return render_template("playlist.html", userdata=userdata, playlistdata=playlistdata, error=error)
 
+            del playlistdata["videos"]
+        return render_template("playlist.html", userdata=userdata, playlistdata=playlistdata, error=error, videodata=database["videos"], video_uuids=database["file_uuid_list"])
+
+
+@app.route('/downloads/<playlist>/<index>')
+def download(playlist, index):
+    userdata = prep_user_data(request)
+    error = None
+    if "username" not in userdata:
+        return redirect("/login")
+    playlistdata = database["playlists"][playlist]
+    videodata = database["videos"][database["file_uuid_list"][playlistdata["videos"][int(index)]]]
+    if "cost_accepted" in request.args and request.args["cost_accepted"] == "true":
+        if userdata["points"] < 1 and False: # allowing points to go negative until I have implemented ways for users to seed before going negative
+            error = "Not enough points!  Seed files to gather more points!"
+        else:
+            userdata["points"] -= 1
+            data = io.BytesIO()
+            data.write(database["file_uuid_list"][playlistdata["videos"][int(index)]].encode())
+            data.seek(0)
+            save_database()
+            return send_file(data, as_attachment=True, attachment_filename=f"{videodata['title']}.melody", mimetype="text/csv")
+    return render_template("download.html", playlisttitle=playlist, index=index, videodata=videodata, userdata=userdata, error=error)
 
 
 
@@ -107,8 +139,6 @@ def prep_user_data(request):
         userdata = database["users"][username]
         userdata["username"] = username
         return userdata
-
-
 
 
 # function to save the database to disk
@@ -127,3 +157,7 @@ if "users" not in database:
     database["users"] = dict()
 if "playlists" not in database:
     database["playlists"] = dict()
+if "videos" not in database:
+    database["videos"] = dict()
+if "file_uuid_list" not in database:
+    database["file_uuid_list"] = list()
