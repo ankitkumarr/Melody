@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Melority: A Melody Authority</title>
+    <body>
+        <a href="/"><h1>Melority: A Melody Authority</h1></a>
+        {% if "username" in userdata %}
+            <h2>Logged in as: {{ userdata["username"] }}  Points: {{ userdata["points"] }}  IP Address: {{ userdata["ip"] }}</h2>
+            <button onclick="window.location.href='/login?logout=logout';">Logout</button>
+        {% else %}
+            <h2>Please Log In</h2>
+            <button onclick="window.location.href='/login';">Login</button>
+        {% endif %}
+        <br><br>
+        {% block content %}
+        {% endblock %}
+    </body>
+</html>
