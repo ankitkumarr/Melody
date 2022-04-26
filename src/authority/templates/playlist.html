@@ -1,0 +1,28 @@
+{% extends "template.html" %}
+{% block content %}
+<h2>{{ playlistdata["title"] }}</h2>
+{% if "videos" in playlistdata %}
+    <hr>
+    {% for video in playlistdata["videos"] %}
+    <div class="video">
+        <a href="/downloads/{{ playlistdata["title"] }}/{{ loop.index0 }}">{{ videodata[video_uuids[video]]["title"] }}</a>
+        <p>
+        {{ videodata[video_uuids[video]]["desc"] }}
+        </p>
+    </div>
+    <hr>
+    {% endfor %}
+{% else %}
+<p>No videos found.  Add one with the button below!</p>
+{% endif %}
+{% if playlistdata["creator"] == userdata["username"] %}
+<form method="POST" action="/playlists/{{ playlistdata["title"] }}" enctype="multipart.form-data">
+    <input type="text" name="file_uuid" placeholder="Melody UUID">
+    <input type="submit" value="Submit">
+</form>
+    {% if error != None %}
+    <div class="errormessage" style="color: red;">{{ error }}</div>
+    {% endif %}
+{% endif %}
+{% endblock %}
+

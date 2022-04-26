@@ -1,0 +1,17 @@
+{% extends "template.html" %}
+{% block content %}
+{% if "playlists" in data %}
+<h2>Playlists:</h2>
+<hr>
+    {% for playlist in data["playlists"] %}
+    <div class="playlist">
+        <a href="/playlists/{{ playlist }}">{{ playlist }}</a>
+    </div>
+    <hr>
+    {% endfor %}
+{% else %}
+No playlists found.  Add one with the button below!
+<hr>
+{% endif %}
+<button onclick="window.location.href='/playlists?action=makenew'">Make New Playlist</button>
+{% endblock %}

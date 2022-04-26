@@ -1,0 +1,12 @@
+{% extends "template.html" %}
+{% block content %}
+<h2>{{ videodata["title"] }}</h2>
+<h3>From playlist: <a href="/playlists/{{ playlisttitle }}">{{ playlisttitle }}</a></h3>
+<hr>
+<p>{{ videodata["desc"] }}</p>
+<hr>
+<button onclick="window.location.href='/downloads/{{ playlisttitle }}/{{ index }}?cost_accepted=true'">Download this video for 1 point.</button>
+{% if error != None %}
+<div class="errormessage" style="color: red;">{{ error }}</div>
+{% endif %}
+{% endblock %}

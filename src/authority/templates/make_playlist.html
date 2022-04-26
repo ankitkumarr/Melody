@@ -1,0 +1,11 @@
+{% extends "template.html" %}
+{% block content %}
+New Playlist Name: 
+<form method="POST" action="/playlists" enctype="multipart.form-data">
+    <input type="text" name="playlist_title" placeholder="Title">
+    <input type="submit" value="Submit">
+</form>
+{% if error != None %}
+<div class="errormessage" style="color: red;">{{ error }}</div>
+{% endif %}
+{% endblock %}

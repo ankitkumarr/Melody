@@ -1,0 +1,8 @@
+{% extends "template.html" %}
+{% block content %}
+Username: 
+<form method="POST" action="/login" enctype="multipart.form-data">
+    <input type="text" name="username" placeholder="Username">
+    <input type="submit" value="Submit">
+</form>
+{% endblock %}
