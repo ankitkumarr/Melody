@@ -89,6 +89,10 @@ func (n *Node) Kill() {
 	// Your code here, if desired.
 }
 
+func (n *Node) Restart() {
+	go n.stabilize_ticker()
+}
+
 func (n *Node) killed() bool {
 	z := atomic.LoadInt32(&n.dead)
 	return z == 1
@@ -118,8 +122,8 @@ func Make(me int, addr string, m int, createRing bool, joinNodeId int, joinNodeA
 		n.Join(joinNode)
 	}
 	go n.stabilize_ticker()
-	// go n.check_predecessor_ticker()
-	go n.fix_fingers_ticker()
+	go n.check_predecessor_ticker()
+	// go n.fix_fingers_ticker()
 	return n
 }
 
@@ -189,38 +193,38 @@ func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) error {
 
 		// first search finger table
 		var n_preced NodeInfo
-		for i := len(n.finger) - 1; i >= 0; i-- {
-			if n.finger[i].Addr != "" {
-				is_pred := isInRange(n.me+1, args.Id-1, n.finger[i].Id, n.ring_size) && diffNotOne(n.me, args.Id, n.ring_size)
-				if is_pred {
-					n_preced.Addr = n.finger[i].Addr
-					n_preced.Id = n.finger[i].Id
-					// debug_print(dClosestp, "N%d actually using finger table! preceeding note is the n + 2 ** %d entry at index N%d", n.me, i, n_preced.Id)
-					debug_print(dFinds, "N%d received findsuccessor request with id %d, cur suc %d, cur pred %d, closest preceding node is %v, from 2 ** %d term of fingers", n.me, args.Id, n.successors[0].Id, n.predecessor.Id, n_preced.Id, i+1)
-					n.mu.Unlock()
+		// for i := len(n.finger) - 1; i >= 0; i-- {
+		// 	if n.finger[i].Addr != "" {
+		// 		is_pred := isInRange(n.me+1, args.Id-1, n.finger[i].Id, n.ring_size) && diffNotOne(n.me, args.Id, n.ring_size)
+		// 		if is_pred {
+		// 			n_preced.Addr = n.finger[i].Addr
+		// 			n_preced.Id = n.finger[i].Id
+		// 			// debug_print(dClosestp, "N%d actually using finger table! preceeding note is the n + 2 ** %d entry at index N%d", n.me, i, n_preced.Id)
+		// 			debug_print(dFinds, "N%d received findsuccessor request with id %d, cur suc %d, cur pred %d, closest preceding node is %v, from 2 ** %d term of fingers", n.me, args.Id, n.successors[0].Id, n.predecessor.Id, n_preced.Id, i+1)
+		// 			n.mu.Unlock()
 
-					rpcPath := "/_goRPC_" + strconv.Itoa(n_preced.Id)
-					for i := 0; i < repeat; i++ {
-						var reply_inner *RPCReply
-						ok := common.Call(n_preced.Addr, rpcPath, "Node.FindSuccessor", &args, &reply_inner, RpcTimeout)
-						if ok {
-							reply.Addr = reply_inner.Addr
-							reply.Id = reply_inner.Id
-							reply.Success = reply_inner.Success
-							return nil
-						} else {
-							time.Sleep(10 * time.Millisecond)
-						}
-					}
-					n.mu.Lock()
-					debug_print(dFinds, "N%d received findsuccessor request with id %d, cur suc %d, cur pred %d, closest preceding node is %v, from 2 ** %d term of fingers, but that node has failed", n.me, args.Id, n.successors[0].Id, n.predecessor.Id, n_preced.Id, i+1)
-					// called n_preced repeat times, all failed
-					// assume that that finger has failed
-					n.finger[i] = NodeInfo{}
-					n.finger[i].Id = -1
-				}
-			}
-		}
+		// 			rpcPath := "/_goRPC_" + strconv.Itoa(n_preced.Id)
+		// 			for i := 0; i < repeat; i++ {
+		// 				var reply_inner *RPCReply
+		// 				ok := common.Call(n_preced.Addr, rpcPath, "Node.FindSuccessor", &args, &reply_inner, RpcTimeout)
+		// 				if ok {
+		// 					reply.Addr = reply_inner.Addr
+		// 					reply.Id = reply_inner.Id
+		// 					reply.Success = reply_inner.Success
+		// 					return nil
+		// 				} else {
+		// 					time.Sleep(10 * time.Millisecond)
+		// 				}
+		// 			}
+		// 			n.mu.Lock()
+		// 			debug_print(dFinds, "N%d received findsuccessor request with id %d, cur suc %d, cur pred %d, closest preceding node is %v, from 2 ** %d term of fingers, but that node has failed", n.me, args.Id, n.successors[0].Id, n.predecessor.Id, n_preced.Id, i+1)
+		// 			// called n_preced repeat times, all failed
+		// 			// assume that that finger has failed
+		// 			n.finger[i] = NodeInfo{}
+		// 			n.finger[i].Id = -1
+		// 		}
+		// 	}
+		// }
 
 		// next search successor list
 		for i := len(n.successors) - 1; i >= 0; i-- {
@@ -255,6 +259,7 @@ func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) error {
 		}
 
 		n.mu.Unlock()
+		//UPSTREAM
 		// by this point, all the fingers and successors must have failed, so we have to declare that the entire system has failed.
 		reply.Success = false
 		return nil
@@ -341,9 +346,11 @@ func (n *Node) stabilize_ticker() {
 				var reply RPCReply
 				successor_addr := n.successors[0].Addr
 				rpcPath := "/_goRPC_" + strconv.Itoa(n.successors[0].Id)
-				debug_print(dStable, "N%d in stabilize, calling suc N%d at addr %v to get suc.pred", n.me, n.successors[0].Id, n.successors[0].Addr)
+				debug_print(dStable, "N%d in stabilize, calling %d-th suc N%d at addr %v to get suc.pred, current suc lsit is %v", n.me, i, n.successors[0].Id, n.successors[0].Addr, n.successors)
 				var ok bool
 				n.mu.Unlock()
+
+				// make rpc calls, if fails too many times, assume that the node failed
 				for j := 0; j < repeat; j++ {
 					reply = RPCReply{}
 					ok = common.Call(successor_addr, rpcPath, "Node.GetPredecessor", &args, &reply, RpcTimeout)
@@ -391,22 +398,40 @@ func (n *Node) stabilize_ticker() {
 								n.mu.Unlock()
 							}
 							break
+						} else {
+							time.Sleep(10 * time.Millisecond)
 						}
 					}
-					break
+
+					if ok {
+						break
+					} else {
+						n.mu.Lock()
+						// current suc[0] has failed because it does not reply to our Notify call, will reshuffle successor list
+						old_suc := n.successors
+						n.successors = make([]NodeInfo, len(old_suc)-1)
+						copy(n.successors, old_suc[1:])
+						new_suc := NodeInfo{}
+						n.successors = append(n.successors, new_suc)
+						n.mu.Unlock()
+					}
 				} else {
 					n.mu.Lock()
+					//UPSTREAM
 					// current suc[0] has failed, will reshuffle successor list
+					debug_print(dStable, "N%d in stabilize, %d-th suc N%d failed, removing it from suc list", n.me, i, n.successors[0].Id)
 					old_suc := n.successors
 					n.successors = make([]NodeInfo, len(old_suc)-1)
 					copy(n.successors, old_suc[1:])
 					new_suc := NodeInfo{}
 					n.successors = append(n.successors, new_suc)
+					debug_print(dStable, "N%d in stabilize, removed %d-th node, new suc list is %v", n.me, i, n.successors)
 					n.mu.Unlock()
 				}
 			}
 			// this means that all of our successors have failed. that means the whole chord has failed
 			//UPSTREAM we could add a method that calls the DHT node and notifies it that the whole chord ring has failed
+			// There is one interesting edge case: all other nodes have failed, except for one. Technically we still have a ring of size 1... do we declare failure?
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -472,6 +497,7 @@ func (n *Node) check_predecessor_ticker() {
 		n.mu.Lock()
 		pred_addr := n.predecessor.Addr
 		rpcPath := "/_goRPC_" + strconv.Itoa(n.predecessor.Id)
+		debug_print(dCheckPred, "N%d in check pred, current pred is N%d, sending msg", n.me, n.predecessor.Id)
 		n.mu.Unlock()
 		if pred_addr != "" {
 			var args NodeInfo
@@ -479,8 +505,9 @@ func (n *Node) check_predecessor_ticker() {
 			ok := common.Call(pred_addr, rpcPath, "Node.Alive", &args, &reply, RpcTimeout)
 			n.mu.Lock()
 			if !(ok && reply.Success) {
-				var null_node NodeInfo
-				n.predecessor = null_node
+				debug_print(dCheckPred, "N%d in check pred, pred was N%d, but it has failed, changing pred to null", n.me, n.predecessor.Id)
+				n.predecessor = NodeInfo{}
+				n.predecessor.Id = -1
 			}
 			n.mu.Unlock()
 		}
