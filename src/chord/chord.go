@@ -647,3 +647,12 @@ func (n *Node) IsMyKey(key int) bool {
 	n.mu.Unlock()
 	return isMyKey
 }
+
+func (n *Node) MyId() int {
+	return n.me
+}
+
+func (n *Node) MyRawId() string {
+	// TODO: Discuss with Chen and fix
+	return ""
+}
