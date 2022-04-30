@@ -84,9 +84,6 @@ type RPCReply struct {
 	Success bool
 }
 
-type SuccessorChange struct {
-}
-
 func (n *Node) Kill() {
 	atomic.StoreInt32(&n.dead, 1)
 	// Your code here, if desired.
@@ -462,25 +459,6 @@ func (n *Node) Notify(args *NodeInfo, reply *NotifyReply) error {
 	reply.Success = true
 	defer n.mu.Unlock()
 	return nil
-}
-
-func (n *Node) notifySuccessorChange() {
-
-}
-
-//
-// This should only be called by a single subscriber
-// Only one notification per change is published in the channel
-//
-func (n *Node) GetNotificationChannel() {
-
-}
-
-//
-// Returns the addresses of all my current successors.
-//
-func (n *Node) GetSuccessors() []string {
-
 }
 
 func (n *Node) fix_fingers_ticker() {
