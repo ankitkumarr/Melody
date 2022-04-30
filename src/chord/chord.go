@@ -60,28 +60,41 @@ func debug_print(topic LogsTopic, format string, a ...interface{}) {
 // see table 1 of chord paper
 type Node struct {
 	mu          sync.Mutex
+	stringID    string     // the id me will be a hash of stringID
 	me          int        // id of the node, lives in range [0, 2^m - 1]
 	addr        string     // the node's own address
 	finger      []NodeInfo // finger table, length m-2, entry i is the successor to me+2^(i+1)
 	successors  []NodeInfo // list of r successors, see sec E.3 of chord paper
 	predecessor NodeInfo
-	next        int   // used for fixing finger table, see fix_fingers() in Fig 6 of chord paper
-	dead        int32 // set by Kill()
-	ring_size   int   // length of the ring, 2 ** (len(finger) + 1)
+	next        int         // used for fixing finger table, see fix_fingers() in Fig 6 of chord paper
+	dead        int32       // set by Kill()
+	ring_size   int         // length of the ring, 2 ** (len(finger) + 1)
+	DHTchan     chan DHTmsg // used to tell DHT when there is pred / suc changes
 }
 
 // for storing info of other nodes
 // also used as the args type for RPCs
 type NodeInfo struct {
-	Addr string
-	Id   int
+	Addr     string
+	Id       int
+	stringID string
 }
 
 type RPCReply struct {
-	Addr string
-	Id   int
+	Addr     string
+	Id       int
+	stringID string
 	// Err  Err
 	Success bool
+}
+
+type DHTmsg struct {
+	PredecessorChange bool
+	SuccesssorChange  bool
+	OldPredecessor    NodeInfo
+	NewPredecessor    NodeInfo
+	OldSuccessors     []NodeInfo
+	NewSuccessors     []NodeInfo
 }
 
 func (n *Node) Kill() {
@@ -99,13 +112,19 @@ func (n *Node) killed() bool {
 }
 
 // initialize a new chord node
-func Make(me int, addr string, m int, createRing bool, joinNodeId int, joinNodeAddr string) *Node {
+func Make(me int, stringID string, addr string, m int, createRing bool, joinNodeId int, joinNodeAddr string, DHTch chan DHTmsg) *Node {
 	n := &Node{}
-	n.me = me
+	n.DHTchan = DHTch
 	n.addr = addr
 	n.finger = make([]NodeInfo, m-2)
 	n.successors = make([]NodeInfo, m)
 	n.ring_size = int(math.Pow(2, float64(m)))
+	n.stringID = stringID
+	if debugVerbosity > 0 {
+		n.me = me
+	} else {
+		n.me = mod(common.KeyHash(stringID), n.ring_size)
+	}
 	newServer := rpc.NewServer()
 	newServer.Register(n)
 	rpcPath := "/_goRPC_" + strconv.Itoa(me)
@@ -171,6 +190,7 @@ func (n *Node) Create() {
 
 	n.successors[0].Addr = n.addr
 	n.successors[0].Id = n.me
+	n.successors[0].stringID = n.stringID
 	debug_print(dCreate, "N%d just created ring", n.me)
 	n.mu.Unlock()
 }
@@ -182,6 +202,7 @@ func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) error {
 	if isSuccessor {
 		reply.Addr = n.successors[0].Addr
 		reply.Id = n.successors[0].Id
+		reply.stringID = n.successors[0].stringID
 		reply.Success = true
 		debug_print(dFinds, "N%d received findsuccessor request with id %d, cur suc %d, cur pred %d, cur suc is successor, returning", n.me, args.Id, n.successors[0].Id, n.predecessor.Id)
 		defer n.mu.Unlock()
@@ -233,7 +254,8 @@ func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) error {
 				if is_pred {
 					n_preced.Addr = n.successors[i].Addr
 					n_preced.Id = n.successors[i].Id
-					debug_print(dFinds, "N%d received findsuccessor request with id %d, cur suc %d, cur pred %d, closest preceding node is %v", n.me, args.Id, n.successors[0].Id, n.predecessor.Id, n_preced.Id)
+					n_preced.stringID = n.successors[i].stringID
+					debug_print(dFinds, "N%d received findsuccessor request with id %d, cur suc %d, cur pred %d, closest preceding node is %v", n.me, args.Id, n.successors[i].Id, n.predecessor.Id, n_preced.Id)
 					n.mu.Unlock()
 
 					rpcPath := "/_goRPC_" + strconv.Itoa(n_preced.Id)
@@ -243,6 +265,7 @@ func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) error {
 						if ok {
 							reply.Addr = reply_inner.Addr
 							reply.Id = reply_inner.Id
+							reply.stringID = reply_inner.stringID
 							reply.Success = reply_inner.Success
 							return nil
 						} else {
@@ -251,9 +274,9 @@ func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) error {
 					}
 					n.mu.Lock()
 					// assume successor i failed
-					debug_print(dFinds, "N%d received findsuccessor request with id %d, cur suc %d, cur pred %d, closest preceding node is %v, but that node has failed", n.me, args.Id, n.successors[0].Id, n.predecessor.Id, n_preced.Id)
-					n.successors[i] = NodeInfo{}
-					n.successors[i].Id = -1
+					debug_print(dFinds, "N%d received findsuccessor request with id %d, cur suc %d, cur pred %d, closest preceding node is %v, but that node has failed", n.me, args.Id, n.successors[i].Id, n.predecessor.Id, n_preced.Id)
+					// n.successors[i] = NodeInfo{}
+					// n.successors[i].Id = -1
 				}
 			}
 		}
@@ -262,6 +285,7 @@ func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) error {
 		//UPSTREAM
 		// by this point, all the fingers and successors must have failed, so we have to declare that the entire system has failed.
 		reply.Success = false
+		reply.Id = -1
 		return nil
 	}
 }
@@ -302,6 +326,7 @@ func (n *Node) Join(n_current *NodeInfo) {
 	var args NodeInfo
 	args.Id = n.me
 	args.Addr = n.addr
+	args.stringID = n.stringID
 	n.mu.Unlock()
 
 	for {
@@ -311,12 +336,24 @@ func (n *Node) Join(n_current *NodeInfo) {
 		debug_print(dJoin, "received findsuccessor response, success? %v", ok)
 		if ok {
 			n.mu.Lock()
+			old_suc := n.successors
 			n.successors[0].Addr = reply.Addr
 			n.successors[0].Id = reply.Id
+			n.successors[0].stringID = reply.stringID
 			debug_print(dJoin, "N%d just set successor as N%d", n.me, reply.Id)
+			if debugVerbosity <= 0 {
+				dhtmsg := DHTmsg{}
+				dhtmsg.SuccesssorChange = true
+				dhtmsg.OldSuccessors = make([]NodeInfo, len(n.successors))
+				dhtmsg.NewSuccessors = make([]NodeInfo, len(n.successors))
+				copy(dhtmsg.OldSuccessors, old_suc)
+				copy(dhtmsg.NewSuccessors, n.successors)
+				n.DHTchan <- dhtmsg
+			}
 			n.mu.Unlock()
 			return
 		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -324,6 +361,7 @@ func (n *Node) GetPredecessor(args *NodeInfo, reply *RPCReply) error {
 	n.mu.Lock()
 	reply.Addr = n.predecessor.Addr
 	reply.Id = n.predecessor.Id
+	reply.stringID = n.predecessor.stringID
 	reply.Success = true
 	n.mu.Unlock()
 	return nil
@@ -340,7 +378,7 @@ func (n *Node) stabilize_ticker() {
 			n.mu.Lock()
 			nSuc := len(n.successors)
 			n.mu.Unlock()
-			for i := 1; i < nSuc; i++ {
+			for i := 0; i < nSuc; i++ {
 				n.mu.Lock()
 				var args NodeInfo
 				var reply RPCReply
@@ -372,14 +410,25 @@ func (n *Node) stabilize_ticker() {
 							copy(n.successors, old_suc[:(len(old_suc)-1)])
 							new_suc := NodeInfo{}
 							new_suc.Addr = reply.Addr
+							new_suc.stringID = reply.stringID
 							new_suc.Id = reply.Id
 							n.successors = append([]NodeInfo{new_suc}, n.successors...)
+							if debugVerbosity <= 0 {
+								dhtmsg := DHTmsg{}
+								dhtmsg.SuccesssorChange = true
+								dhtmsg.OldSuccessors = make([]NodeInfo, len(n.successors))
+								dhtmsg.NewSuccessors = make([]NodeInfo, len(n.successors))
+								copy(dhtmsg.OldSuccessors, old_suc)
+								copy(dhtmsg.NewSuccessors, n.successors)
+								n.DHTchan <- dhtmsg
+							}
 						}
 					}
 					successor_addr := n.successors[0].Addr
 					rpcPath := "/_goRPC_" + strconv.Itoa(n.successors[0].Id)
 					args.Addr = n.addr
 					args.Id = n.me
+					args.stringID = n.stringID
 					debug_print(dStable, "N%d in stabilize, calling notify to suc N%d", n.me, n.successors[0].Id)
 					n.mu.Unlock()
 
@@ -389,12 +438,28 @@ func (n *Node) stabilize_ticker() {
 						if ok {
 							if reply.Success {
 								n.mu.Lock()
-								cur_suc := NodeInfo{}
-								cur_suc.Addr = n.successors[0].Addr
-								cur_suc.Id = n.successors[0].Id
-								n.successors = make([]NodeInfo, len(reply.Successors))
-								copy(n.successors, reply.Successors)
-								n.successors = append([]NodeInfo{cur_suc}, n.successors...)
+								for l, node := range reply.Successors {
+									if node.Addr != n.successors[l+1].Addr {
+										old_suc := n.successors
+										cur_suc := NodeInfo{}
+										cur_suc.Addr = n.successors[0].Addr
+										cur_suc.Id = n.successors[0].Id
+										cur_suc.stringID = n.successors[0].stringID
+										n.successors = make([]NodeInfo, len(reply.Successors))
+										copy(n.successors, reply.Successors)
+										n.successors = append([]NodeInfo{cur_suc}, n.successors...)
+										if debugVerbosity <= 0 {
+											dhtmsg := DHTmsg{}
+											dhtmsg.SuccesssorChange = true
+											dhtmsg.OldSuccessors = make([]NodeInfo, len(n.successors))
+											dhtmsg.NewSuccessors = make([]NodeInfo, len(n.successors))
+											copy(dhtmsg.OldSuccessors, old_suc)
+											copy(dhtmsg.NewSuccessors, n.successors)
+											n.DHTchan <- dhtmsg
+										}
+										break
+									}
+								}
 								n.mu.Unlock()
 							}
 							break
@@ -413,6 +478,15 @@ func (n *Node) stabilize_ticker() {
 						copy(n.successors, old_suc[1:])
 						new_suc := NodeInfo{}
 						n.successors = append(n.successors, new_suc)
+						if debugVerbosity <= 0 {
+							dhtmsg := DHTmsg{}
+							dhtmsg.SuccesssorChange = true
+							dhtmsg.OldSuccessors = make([]NodeInfo, len(n.successors))
+							dhtmsg.NewSuccessors = make([]NodeInfo, len(n.successors))
+							copy(dhtmsg.OldSuccessors, old_suc)
+							copy(dhtmsg.NewSuccessors, n.successors)
+							n.DHTchan <- dhtmsg
+						}
 						n.mu.Unlock()
 					}
 				} else {
@@ -426,6 +500,15 @@ func (n *Node) stabilize_ticker() {
 					new_suc := NodeInfo{}
 					n.successors = append(n.successors, new_suc)
 					debug_print(dStable, "N%d in stabilize, removed %d-th node, new suc list is %v", n.me, i, n.successors)
+					if debugVerbosity <= 0 {
+						dhtmsg := DHTmsg{}
+						dhtmsg.SuccesssorChange = true
+						dhtmsg.OldSuccessors = make([]NodeInfo, len(n.successors))
+						dhtmsg.NewSuccessors = make([]NodeInfo, len(n.successors))
+						copy(dhtmsg.OldSuccessors, old_suc)
+						copy(dhtmsg.NewSuccessors, n.successors)
+						n.DHTchan <- dhtmsg
+					}
 					n.mu.Unlock()
 				}
 			}
@@ -450,8 +533,17 @@ func (n *Node) Notify(args *NodeInfo, reply *NotifyReply) error {
 	debug_print(dNotify, "N%d received notify from N%d, cur pred is %d", n.me, args.Id, n.predecessor.Id)
 	is_pred := isInRange(n.predecessor.Id+1, n.me-1, args.Id, n.ring_size) && diffNotOne(n.predecessor.Id, n.me, n.ring_size)
 	if (n.predecessor.Id < 0) || is_pred {
+		old_pred := n.predecessor
 		n.predecessor.Addr = args.Addr
 		n.predecessor.Id = args.Id
+		n.predecessor.stringID = args.stringID
+		if debugVerbosity <= 0 {
+			dhtmsg := DHTmsg{}
+			dhtmsg.PredecessorChange = true
+			dhtmsg.OldPredecessor = old_pred
+			dhtmsg.NewPredecessor = n.predecessor
+			n.DHTchan <- dhtmsg
+		}
 	}
 	debug_print(dNotify, "N%d received notify from N%d, changed pred to %d, returning", n.me, args.Id, n.predecessor.Id)
 	reply.Successors = make([]NodeInfo, len(n.successors)-1)
@@ -506,8 +598,16 @@ func (n *Node) check_predecessor_ticker() {
 			n.mu.Lock()
 			if !(ok && reply.Success) {
 				debug_print(dCheckPred, "N%d in check pred, pred was N%d, but it has failed, changing pred to null", n.me, n.predecessor.Id)
+				old_pred := n.predecessor
 				n.predecessor = NodeInfo{}
 				n.predecessor.Id = -1
+				if debugVerbosity <= 0 {
+					dhtmsg := DHTmsg{}
+					dhtmsg.PredecessorChange = true
+					dhtmsg.OldPredecessor = old_pred
+					dhtmsg.NewPredecessor = n.predecessor
+					n.DHTchan <- dhtmsg
+				}
 			}
 			n.mu.Unlock()
 		}
@@ -525,7 +625,7 @@ func (n *Node) Alive(args *NodeInfo, reply *RPCReply) error {
 // Returns the Ip address of the chord server with the key
 // and the id of the server for debugging
 //
-func (n *Node) Lookup(key int) (string, int) {
+func (n *Node) Lookup(key int) (string, int, string) {
 	var args NodeInfo
 	var reply RPCReply
 	args.Id = key
@@ -534,7 +634,7 @@ func (n *Node) Lookup(key int) (string, int) {
 	n.mu.Unlock()
 
 	n.FindSuccessor(&args, &reply)
-	return reply.Addr, reply.Id
+	return reply.Addr, reply.Id, reply.stringID
 }
 
 //
@@ -542,7 +642,10 @@ func (n *Node) Lookup(key int) (string, int) {
 // specific key.
 //
 func (n *Node) IsMyKey(key int) bool {
-	return false
+	n.mu.Lock()
+	isMyKey := isInRange(n.predecessor.Id+1, n.me-1, key, n.ring_size) && diffNotOne(n.predecessor.Id, n.me, n.ring_size)
+	n.mu.Unlock()
+	return isMyKey
 }
 
 func (n *Node) MyId() int {

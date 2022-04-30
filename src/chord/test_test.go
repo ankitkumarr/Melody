@@ -38,10 +38,10 @@ func GenericTest(t *testing.T, leave bool) {
 		addr := "127.0.0.1:" + strconv.Itoa(8000+ids[i])
 		// httpServer(addr)
 		if i == 0 {
-			chord_nodes[i] = Make(ids[i], addr, m, true, -1, "")
+			chord_nodes[i] = Make(ids[i], "", addr, m, true, -1, "", nil)
 			listeners[i], http_servers[i] = startNewServer(addr)
 		} else {
-			chord_nodes[i] = Make(ids[i], addr, m, false, ids[0], chord_nodes[0].addr)
+			chord_nodes[i] = Make(ids[i], "", addr, m, false, ids[0], chord_nodes[0].addr, nil)
 			listeners[i], http_servers[i] = startNewServer(addr)
 		}
 		// wait for create or join to complete
@@ -95,7 +95,7 @@ func GenericTest(t *testing.T, leave bool) {
 			query_node := rand.Intn(i + 1)
 			keyN := rand.Intn(ring_size)
 			log.Printf("iteration %v, # %v, key value %v\n", i, j, keyN)
-			_, suc_id := chord_nodes[query_node].Lookup(keyN)
+			_, suc_id, _ := chord_nodes[query_node].Lookup(keyN)
 
 			if i == 0 {
 				if suc_id != ids[0] {
@@ -227,7 +227,7 @@ func GenericTest(t *testing.T, leave bool) {
 				}
 				keyN := rand.Intn(ring_size)
 				log.Printf("iteration after shutdown %v, # %v, key value %v\n", i, j, keyN)
-				_, suc_id := chord_nodes[index].Lookup(keyN)
+				_, suc_id, _ := chord_nodes[index].Lookup(keyN)
 
 				if i == n_nodes-2 {
 					if suc_id != to_leave_ids[n_nodes-1] {
