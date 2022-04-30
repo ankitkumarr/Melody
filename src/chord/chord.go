@@ -654,5 +654,7 @@ func (n *Node) MyId() int {
 
 func (n *Node) MyRawId() string {
 	// TODO: Discuss with Chen and fix
-	return ""
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.stringID
 }
