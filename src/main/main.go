@@ -20,6 +20,7 @@ func main() {
 	}
 	chord_id := os.Args[1]
 	chord_hashed_id := common.KeyHash(chord_id)
+	log.Printf("CHORD HASHED: %v and ID %v", chord_hashed_id, chord_id)
 	port := os.Args[2]
 	create, err := strconv.ParseBool(os.Args[3])
 	if err != nil {
@@ -44,7 +45,7 @@ func main() {
 	// But might as well give a generous buffer to avoid blocks
 	chordChangeCh := make(chan chord.ChangeNotifyMsg, 100)
 	ch := chord.Make(chord_hashed_id, chord_id, my_address, 10, create, joinNodeIdHashed, joinNodeAdd, chordChangeCh)
-	dht := dht.Make(ch, my_address, chordChangeCh)
+	dht := dht.Make(ch, chord_id, my_address, chordChangeCh)
 	melody.Make(dht, my_address)
 
 	httpServer(port)
