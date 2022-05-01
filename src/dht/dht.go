@@ -19,14 +19,14 @@ const RpcPath = "/_goRPC_HashTable"
 const RpcDebugPath = "/debug/rpc_HashTable"
 
 type HashTableNode struct {
-	id          string
-	data        HashData
-	replicas    map[int]*ReplicaInfo
-	chord       *chord.Node
-	mu          sync.Mutex
-	address     string
-	successors  []chord.NodeInfo
-	predecessor chord.NodeInfo
+	id            string
+	data          HashData
+	replicas      map[int]*ReplicaInfo
+	chord         *chord.Node
+	mu            sync.Mutex
+	address       string
+	successors    []chord.NodeInfo
+	chordChangeCh chan chord.ChangeNotifyMsg
 }
 
 type NodeId struct {
@@ -105,7 +105,7 @@ type GetMyDataReply struct {
 	Err     string
 }
 
-func Make(ch *chord.Node, address string) *HashTableNode {
+func Make(ch *chord.Node, address string, chordChangeCh chan chord.ChangeNotifyMsg) *HashTableNode {
 	htNode := HashTableNode{}
 	htNode.id = strconv.Itoa(os.Getuid())
 	htNode.chord = ch
@@ -121,6 +121,7 @@ func Make(ch *chord.Node, address string) *HashTableNode {
 	newServer.HandleHTTP(RpcPath, RpcDebugPath)
 
 	htNode.setupHttpRoutes()
+	go htNode.monitorChordChanges()
 
 	return &htNode
 }
@@ -166,7 +167,8 @@ func (hn *HashTableNode) StoreReplicas(args *StoreReplicasArgs, reply *StoreRepl
 	// We need to check if the Data in store replica call was already there in some other replicas,
 	// if so, we need to perform a move operation
 	// TODO: Otherwise, if a new Node A joins and takes some keys off of Node B, we don't just want to
-	// add A's newly acquired data, we need to get rid of B's old data too.
+	// add A's newly acquired data, we need to get rid of B's old data too. Hopefully, B is alive enough to
+	// call the MoveReplicas itself. But who knows!
 
 	// Helps eliminate a tiny portion of malicious intent
 	if hashedId != args.DhtId.HashedUid {
@@ -413,7 +415,7 @@ func (hn *HashTableNode) Get(key string) interface{} {
 		args.Id = strconv.Itoa(os.Getuid())
 		args.Key = key
 
-		add, _ := hn.chord.Lookup(keyHashed)
+		add, _, _ := hn.chord.Lookup(keyHashed)
 
 		// My key
 		// Right now chord does not implement IsMyKey
@@ -454,7 +456,7 @@ func (hn *HashTableNode) Put(key string, value interface{}) bool {
 		args.Key = key
 		args.Value = value
 
-		add, _ := hn.chord.Lookup(keyHashed)
+		add, _, _ := hn.chord.Lookup(keyHashed)
 
 		// My key
 		// Right now chord does not implement IsMyKey
@@ -554,8 +556,7 @@ func (hn *HashTableNode) predecessorChanged(old chord.NodeInfo, new chord.NodeIn
 		hn.upgradeReplica(new.Id)
 	} else {
 		// Newer predecessor is closer to me. So, I can expire entries that are covered by this
-		// TODO: Fill this
-		newP := NodeId{HashedUid: new.Id, Uid: ""}
+		newP := NodeId{HashedUid: new.Id, Uid: new.StringID}
 		hn.downgradePrimary(newP, new.Id)
 	}
 }
@@ -577,8 +578,28 @@ func (hn *HashTableNode) joined(successor chord.NodeInfo) {
 	}
 }
 
+func (hn *HashTableNode) monitorChordChanges() {
+	for change := range hn.chordChangeCh {
+		// We may want to be careful with races here
+		// Given that this can kickoff multiple concurrent changes.
+		// For now, this is OK. Revisit if we see concurrency issues.
+		if change.JoinEvent {
+			if len(change.OldSuccessors) != 0 && len(change.NewSuccessors) != 1 {
+				log.Printf("Expected old successor list to be 0 and new successor list to be 1, "+
+					"but instead got %v and %v from Chord", len(change.OldSuccessors), len(change.NewSuccessors))
+			}
+			go hn.joined(change.NewSuccessors[0])
+		} else if change.SuccesssorChange {
+			go hn.successorChanged(change.OldSuccessors, change.NewSuccessors)
+		} else if change.PredecessorChange {
+			go hn.predecessorChanged(change.OldPredecessor, change.NewPredecessor)
+		} else {
+			log.Println("Chord sent DHT a NOOP change. Unexpected!")
+		}
+	}
+}
+
 func (hn *HashTableNode) successorChanged(oldsuccessors []chord.NodeInfo, newSuccessors []chord.NodeInfo) {
-	// TODO: Remove, and add replicas
 	oldMap := make(map[string]chord.NodeInfo)
 	newMap := make(map[string]chord.NodeInfo)
 
