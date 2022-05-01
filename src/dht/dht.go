@@ -110,6 +110,7 @@ func Make(ch *chord.Node, address string, chordChangeCh chan chord.ChangeNotifyM
 	htNode.id = strconv.Itoa(os.Getuid())
 	htNode.chord = ch
 	htNode.address = address
+	htNode.chordChangeCh = chordChangeCh
 
 	htNode.data = HashData{}
 	htNode.data.Data = make(map[string]interface{})
@@ -583,16 +584,21 @@ func (hn *HashTableNode) monitorChordChanges() {
 		// We may want to be careful with races here
 		// Given that this can kickoff multiple concurrent changes.
 		// For now, this is OK. Revisit if we see concurrency issues.
+		log.Println("Received event")
 		if change.JoinEvent {
-			if len(change.OldSuccessors) != 0 && len(change.NewSuccessors) != 1 {
-				log.Printf("Expected old successor list to be 0 and new successor list to be 1, "+
-					"but instead got %v and %v from Chord", len(change.OldSuccessors), len(change.NewSuccessors))
-			}
+			// Cannot verify here before the length of successors is always same
+			// if len(change.OldSuccessors) != 0 && len(change.NewSuccessors) != 1 {
+			// 	log.Printf("Expected old successor list to be 0 and new successor list to be 1, "+
+			// 		"but instead got %v and %v from Chord", len(change.OldSuccessors), len(change.NewSuccessors))
+			// }
 			go hn.joined(change.NewSuccessors[0])
+			log.Printf("Received join event")
 		} else if change.SuccesssorChange {
 			go hn.successorChanged(change.OldSuccessors, change.NewSuccessors)
+			log.Printf("Received successor change event")
 		} else if change.PredecessorChange {
 			go hn.predecessorChanged(change.OldPredecessor, change.NewPredecessor)
+			log.Printf("Received predecessor change event")
 		} else {
 			log.Println("Chord sent DHT a NOOP change. Unexpected!")
 		}
