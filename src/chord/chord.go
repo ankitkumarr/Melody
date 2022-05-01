@@ -34,14 +34,14 @@ var debugStart time.Time
 var debugVerbosity int
 
 func init() {
-	debugVerbosity = 1
+	debugVerbosity = 0
 	debugStart = time.Now()
 
 	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
 }
 
 func debug_print(topic LogsTopic, format string, a ...interface{}) {
-	if debugVerbosity > 0 {
+	if debugVerbosity > -1 {
 		time := time.Since(debugStart).Microseconds()
 		time /= 100
 		prefix := fmt.Sprintf("%06d %v ", time, string(topic))
@@ -113,19 +113,15 @@ func (n *Node) killed() bool {
 }
 
 // initialize a new chord node
-func Make(me int, stringID string, addr string, m int, createRing bool, joinNodeId int, joinNodeAddr string, ChangeNotch chan ChangeNotifyMsg) *Node {
+func Make(me int, stringID string, addr string, m int, createRing bool, joinNodeId int, joinNodeAddr string, changeNotifyChan chan ChangeNotifyMsg) *Node {
 	n := &Node{}
-	n.ChangeNotifyChan = ChangeNotch
+	n.ChangeNotifyChan = changeNotifyChan
 	n.addr = addr
 	n.finger = make([]NodeInfo, m-2)
 	n.successors = make([]NodeInfo, m)
 	n.ring_size = int(math.Pow(2, float64(m)))
 	n.stringID = stringID
-	if debugVerbosity > 0 {
-		n.me = me
-	} else {
-		n.me = mod(common.KeyHash(stringID), n.ring_size)
-	}
+	n.me = me
 	newServer := rpc.NewServer()
 	newServer.Register(n)
 	rpcPath := "/_goRPC_" + strconv.Itoa(me)
