@@ -856,6 +856,27 @@ func (hn *HashTableNode) successorChanged(oldsuccessors []chord.NodeInfo, newSuc
 	hn.mu.Lock()
 	defer hn.mu.Unlock()
 
-	hn.successors = fixedNewSuccessors
+	uniqueSucc := make([]chord.NodeInfo, 0)
+	for _, v := range newMap {
+		uniqueSucc = append(uniqueSucc, v)
+	}
+
+	hn.successors = uniqueSucc
 	hn.debugLog("Successors change handled and released lock")
+}
+
+func (hn *HashTableNode) GetSuccessors() []string {
+	hn.mu.Lock()
+	defer hn.mu.Unlock()
+
+	successors := make([]string, len(hn.successors))
+	for i, s := range hn.successors {
+		successors[i] = s.Addr
+	}
+
+	return successors
+}
+
+func (hn *HashTableNode) GetData() map[string]interface{} {
+	return hn.data.Data
 }
