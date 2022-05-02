@@ -1,6 +1,8 @@
 from flask import Flask, render_template, request, jsonify, make_response, abort, redirect, send_file
 import json, requests, io
+from threading import Lock, Thread
 from melody_bridge import *
+from quizzing import *
 
 app = Flask(__name__)
 
@@ -8,8 +10,8 @@ app = Flask(__name__)
 @app.route('/index')
 @app.route('/about')
 def index():
-    userdata = prep_user_data(request)
     playlists = None
+    userdata = prep_user_data(request)
     if "playlists" in database and len(database["playlists"]) > 0:
         playlists = database["playlists"]
     data = dict()
@@ -26,8 +28,11 @@ def login():
         data = request.form
         username = data['username']
         if not username in database["users"]:
-            database["users"][username] = {"points" : 0, "ip" : request.remote_addr}
+            datalock.acquire()
+            if not username in database["users"]:
+                database["users"][username] = {"points" : 0, "ip" : request.remote_addr}
             save_database()
+            datalock.release()
         resp.set_cookie("username",username)
         return resp
     else:
@@ -41,10 +46,8 @@ def login():
 def playlists(playlist):
     userdata = prep_user_data(request)
     error = None
-    print(request.args)
     if "error" in request.args:
         error = request.args["error"]
-        print("found error: " + error)
     if playlist is None:
         if request.method == "POST":
             if "username" not in userdata:
@@ -59,8 +62,10 @@ def playlists(playlist):
                 if title in database["playlists"]:
                     error = "Playlist already exists."
                 else:
+                    datalock.acquire()
                     database["playlists"][title] = {"creator" : userdata["username"], "videos" : []}
                     save_database()
+                    datalock.release()
                     return redirect(f"/playlists/{title}")
             return render_template("make_playlist.html", userdata=userdata, error=error)
 
@@ -75,6 +80,8 @@ def playlists(playlist):
             return redirect("/playlists?action=makenew&error=Playlist not found, but you can create it here.")
         playlistdata = database["playlists"][playlist]
         if request.method == "POST":
+            datalock.acquire()
+            playlistdata = database["playlists"][playlist]
             data = request.form
             if playlistdata["creator"] != userdata["username"]:
                 error = "Only the creator of a playlist is allowed to edit it."
@@ -98,6 +105,7 @@ def playlists(playlist):
                         database["playlists"][playlist]["videos"].append(vidindex)
                     save_database()
                     playlistdata = database["playlists"][playlist]
+            datalock.release()
         playlistdata = playlistdata.copy()
         playlistdata["title"] = playlist
         if len(playlistdata["videos"]) == 0:
@@ -108,26 +116,31 @@ def playlists(playlist):
 
 @app.route('/downloads/<playlist>/<index>')
 def download(playlist, index):
+    #TODO this code has an edge case where a user could end up paying a different cost from what they agreed to
+    # I have ideas for fixing it (e.g. a system where a user locks in a cost the first time they visit the page)
+    # but I'm considering it unimportant for an initial demo
     userdata = prep_user_data(request)
     error = None
     if "username" not in userdata:
         return redirect("/login")
     playlistdata = database["playlists"][playlist]
     videodata = database["videos"][database["file_uuid_list"][playlistdata["videos"][int(index)]]]
+    quizmaster.check_reevaluate_cost(database["file_uuid_list"][playlistdata["videos"][int(index)]])
+    cost = 0 if len(videodata["seeders"]) < 2 else 1
     if "cost_accepted" in request.args and request.args["cost_accepted"] == "true":
-        if userdata["points"] < 1 and False: # allowing points to go negative until I have implemented ways for users to seed before going negative
+        datalock.acquire()
+        if userdata["points"] < cost and False: # allowing points to go negative until I have implemented ways for users to seed before going negative
             error = "Not enough points!  Seed files to gather more points!"
+            datalock.release()
         else:
-            userdata["points"] -= 1
+            userdata["points"] -= cost
             data = io.BytesIO()
             data.write(database["file_uuid_list"][playlistdata["videos"][int(index)]].encode())
             data.seek(0)
             save_database()
+            datalock.release()
             return send_file(data, as_attachment=True, attachment_filename=f"{videodata['title']}.melody", mimetype="text/csv")
-    return render_template("download.html", playlisttitle=playlist, index=index, videodata=videodata, userdata=userdata, error=error)
-
-
-
+    return render_template("download.html", playlisttitle=playlist, index=index, videodata=videodata, userdata=userdata, error=error, cost=cost)
 
 
 
@@ -143,11 +156,16 @@ def prep_user_data(request):
 
 # function to save the database to disk
 def save_database():
+    assert datalock.locked()
     with open("database.json","w") as f:
         json.dump(database, f)
 
+
+
+
 # prepare and load the database and stuf
 database = dict()
+datalock = Lock()
 try:
     with open("database.json", "r") as f:
         database = json.load(f)
@@ -161,3 +179,8 @@ if "videos" not in database:
     database["videos"] = dict()
 if "file_uuid_list" not in database:
     database["file_uuid_list"] = list()
+
+
+quizmaster = QuizMaster(datalock, database)
+quiz_thread = Thread(target=start_quiz_loop, args=(quizmaster,))
+quiz_thread.start()

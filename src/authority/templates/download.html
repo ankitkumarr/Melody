@@ -5,7 +5,7 @@
 <hr>
 <p>{{ videodata["desc"] }}</p>
 <hr>
-<button onclick="window.location.href='/downloads/{{ playlisttitle }}/{{ index }}?cost_accepted=true'">Download this video for 1 point.</button>
+<button onclick="window.location.href='/downloads/{{ playlisttitle }}/{{ index }}?cost_accepted=true'">Download this video for {{ cost }} points.</button>
 {% if error != None %}
 <div class="errormessage" style="color: red;">{{ error }}</div>
 {% endif %}

@@ -15,6 +15,9 @@ def get_seeded_files(node_ip):
 def get_data_from_client(node_ip, file_uuid):
     return None
 
+def download_file(file_uuid):
+    return None
+
 # these methods are mostly used for an authority trying to serve content to a client
 def get_metadata_from_file(file_uuid):
     return {"title" : "Video Title", "desc" : f"Video from uuid {file_uuid}.", "seeders" : ["127.0.0.1"]}
