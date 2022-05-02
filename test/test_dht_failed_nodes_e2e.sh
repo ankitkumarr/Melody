@@ -47,14 +47,14 @@ for (( i=5 ; i<10 ; i++ )) ; do
 done
 
 kill_all () {
-    for (( i=2 ; i<10 ; i++ )) ; do
+    for (( i=0 ; i<10 ; i++ )) ; do
         kill ${pid[$i]}
     done
     exit 1
 }
 
 kill_all_success() {
-    for (( i=2 ; i<10 ; i++ )) ; do
+    for (( i=0 ; i<10 ; i++ )) ; do
         kill ${pid[$i]}
     done
     exit 0

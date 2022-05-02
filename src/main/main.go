@@ -44,7 +44,7 @@ func main() {
 	// Channel needs at least 1 buffer for Chord to start up without blocking.
 	// But might as well give a generous buffer to avoid blocks
 	chordChangeCh := make(chan chord.ChangeNotifyMsg, 100)
-	ch := chord.Make(chord_hashed_id, chord_id, my_address, 10, create, joinNodeIdHashed, joinNodeAdd, chordChangeCh)
+	ch := chord.Make(chord_hashed_id, chord_id, my_address, 31, create, joinNodeIdHashed, joinNodeAdd, chordChangeCh)
 	dht := dht.Make(ch, chord_id, my_address, chordChangeCh)
 	melody.Make(dht, my_address)
 

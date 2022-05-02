@@ -16,6 +16,7 @@ import (
 const RpcTimeout = 5 * time.Second
 
 const repeat = 3
+const successorCount = 5
 
 type LogsTopic string
 
@@ -118,7 +119,7 @@ func Make(me int, stringID string, addr string, m int, createRing bool, joinNode
 	n.ChangeNotifyChan = changeNotifyChan
 	n.addr = addr
 	n.finger = make([]NodeInfo, m-2)
-	n.successors = make([]NodeInfo, m)
+	n.successors = make([]NodeInfo, successorCount)
 	n.ring_size = int(math.Pow(2, float64(m)))
 	n.stringID = stringID
 	n.me = me
