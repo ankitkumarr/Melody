@@ -143,6 +143,50 @@ for (( i=8 ; i<10 ; i++ )) ; do
     fi
 done
 
+###########################################
+echo "Add Some keys to the remaining chain"
+
+ran=30
+for (( i=0 ; i<4 ; i++ )) ; do
+    add=$(($i + 8001))
+    ran=$(($ran + 1))
+    response=$(curl "localhost:$add/dhtput?key=$ran&value=$ran$ran")
+    if [[ $response != "Add key $ran: $ran$ran to the DHT" ]] ; then
+        echo "PUT failed"
+        kill_all
+    fi
+    sleep 2
+done
+
+echo "Get those keys from random nodes"
+response=$(curl "localhost:8001/dhtget?key=31")
+if [[ $response != "Retrieved value for key 31: 3131" ]] ; then
+    echo "GET failed"
+    kill_all
+fi
+
+echo "Get those keys from random nodes"
+response=$(curl "localhost:8009/dhtget?key=32")
+if [[ $response != "Retrieved value for key 32: 3232" ]] ; then
+    echo "GET failed"
+    kill_all
+fi
+
+echo "Get those keys from random nodes"
+response=$(curl "localhost:8003/dhtget?key=33")
+if [[ $response != "Retrieved value for key 33: 3333" ]] ; then
+    echo "GET failed"
+    kill_all
+fi
+
+echo "Get those keys from random nodes"
+response=$(curl "localhost:8002/dhtget?key=34")
+if [[ $response != "Retrieved value for key 34: 3434" ]] ; then
+    echo "GET failed"
+    kill_all
+fi
+#########################################
+echo "###################################"
 echo "ALL TESTS PASSED!"
 # wait ${pid[1]}
 # wait ${pid[0]}
