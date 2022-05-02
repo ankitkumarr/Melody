@@ -30,12 +30,18 @@ type FileMetadata struct {
 	Id    string
 }
 
+type FileSeederInfo struct {
+	Metadata FileMetadata
+	Seeders  []string
+}
+
 func Make(dht *dht.HashTableNode, myAdd string) Melody {
 	m := Melody{}
 	m.dht = dht
 	m.address = myAdd
 	gob.Register(&FileMetadata{})
 	gob.Register([]FileMetadata{})
+	gob.Register(FileSeederInfo{})
 	m.setupHttpRoutes()
 	return m
 }
@@ -121,6 +127,75 @@ func (m *Melody) addNewFile(w http.ResponseWriter, r *http.Request) {
 	m.AddPeerServingFile(m.address, newfile)
 }
 
+func getFilesSeeding(w http.ResponseWriter, r *http.Request) {
+	os.MkdirAll(StoreDirectoryName, os.ModePerm)
+	files, err := ioutil.ReadDir(StoreDirectoryName)
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Could not find the files being seeded"))
+		return
+	}
+
+	result := make([]string, len(files))
+	for i, f := range files {
+		result[i] = f.Name()
+	}
+
+	resultJson, err := json.Marshal(result)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Error encoding seeding files to json"))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(resultJson))
+}
+
+func (m *Melody) getNextNodes(w http.ResponseWriter, r *http.Request) {
+	nextNodes := m.dht.GetSuccessors()
+	nextNodesJson, err := json.Marshal(nextNodes)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Error encoding next nodes to json"))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(nextNodesJson))
+}
+
+func (m *Melody) getAllLocalKeywords(w http.ResponseWriter, r *http.Request) {
+	localdata := m.dht.GetData()
+	result := make(map[string][]FileMetadata)
+
+	for k, v := range localdata {
+		if strings.HasPrefix(k, KeywordPrefix) {
+			val, ok := v.([]FileMetadata)
+			if !ok {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte("Unexpected data when reading local data."))
+				return
+			}
+			result[k] = val
+		}
+	}
+
+	resultJson, err := json.Marshal(result)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Error encoding result to json"))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(resultJson))
+}
+
 func (m *Melody) queryFiles(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	if len(query["query"]) == 0 {
@@ -177,9 +252,12 @@ func (m *Melody) findFile(w http.ResponseWriter, r *http.Request) {
 
 func (m *Melody) setupHttpRoutes() {
 	http.HandleFunc("/queryfiles", m.queryFiles)
-	http.HandleFunc("/findfilelocation", m.findFile)
+	http.HandleFunc("/findfile", m.findFile)
 	http.HandleFunc("/addnewfile", m.addNewFile)
 	http.HandleFunc("/getfile", getFile)
+	http.HandleFunc("/getfilesseeding", getFilesSeeding)
+	http.HandleFunc("/getnextnodes", m.getNextNodes)
+	http.HandleFunc("/getlocalkeywords", m.getAllLocalKeywords)
 }
 
 func (m *Melody) AddFileToIndex(f FileMetadata) {
@@ -240,29 +318,32 @@ func (m *Melody) AddPeerServingFile(peerAddress string, f FileMetadata) {
 	if val == nil {
 		newval := make([]string, 1)
 		newval[0] = peerAddress
-		m.dht.Put(key, newval)
+		seederInfo := FileSeederInfo{}
+		seederInfo.Metadata = f
+		seederInfo.Seeders = newval
+		m.dht.Put(key, seederInfo)
 	} else {
-		if seeders, ok := val.([]string); ok {
-			seeders = append(seeders, peerAddress)
-			m.dht.Put(key, seeders)
+		if seederInfo, ok := val.(FileSeederInfo); ok {
+			seederInfo.Seeders = append(seederInfo.Seeders, peerAddress)
+			m.dht.Put(key, seederInfo)
 		} else {
-			log.Fatalf("Invalid data in DHT. Expected Seeders info for key %v.", key)
+			log.Fatalf("Invalid data in DHT. Expected FileSeederInfo for key %v.", key)
 		}
 	}
 }
 
-func (m *Melody) LocateSeeders(fileId string) []string {
+func (m *Melody) LocateSeeders(fileId string) FileSeederInfo {
 	key := fmt.Sprintf("%v%v", FilePrefix, fileId)
 	val := m.dht.Get(key)
 
 	if val == nil {
-		return nil
+		return FileSeederInfo{}
 	}
 
-	if seeders, ok := val.([]string); ok {
-		return seeders
+	if seederInfo, ok := val.(FileSeederInfo); ok {
+		return seederInfo
 	} else {
-		log.Fatalf("Invalid data in DHT. Expected Seeders info for key %v.", key)
-		return nil
+		log.Fatalf("Invalid data in DHT. Expected FileSeederInfo for key %v.", key)
+		return FileSeederInfo{}
 	}
 }
