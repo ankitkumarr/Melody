@@ -139,6 +139,9 @@ func (hn *HashTableNode) debugLog(format string, a ...interface{}) {
 		// time /= 100
 		time := time.Now()
 		prefix := fmt.Sprintf("%02d:%02d:%02d:%2d [%v] [%v] [%v] [pre: %v]: ", time.Hour(), time.Minute(), time.Second(), time.UnixMilli(), hn.address, hn.id, hn.hashedId, hn.lastknownPred.Id)
+		if DhtDebug > 2 {
+			prefix = fmt.Sprintf("%v [data: %v]  ", prefix, hn.data)
+		}
 		format = prefix + format
 		log.Printf(format, a...)
 	}
@@ -318,15 +321,21 @@ func (hn *HashTableNode) GetMyData(args *GetMyDataArgs, reply *GetMyDataReply) e
 	data := make(map[string]interface{})
 	myhashed := hn.chord.MyId()
 
-	// This means that the requester's ID is before 0. Eg- I am 100, requestor is 950
-	leftboundary := myhashed < fromHashed
+	// This means that the requester's ID is before 0.
+	// Eg- I am 100, requestor is 950; I need to share 101 - 950
+	// I am 950, requester is 100; I need to share 951 - 999 & 0 - 100
+	IamSmaller := myhashed < fromHashed
 
 	for k, v := range hn.data.Data {
 		hk := common.KeyHash(k)
-		if leftboundary && hk <= fromHashed && hk > myhashed {
-			data[k] = v
-		} else if !leftboundary && hk <= fromHashed {
-			data[k] = v
+		if IamSmaller {
+			if hk > myhashed && hk <= fromHashed {
+				data[k] = v
+			}
+		} else if !IamSmaller {
+			if (hk > myhashed && hk > fromHashed) || (hk < myhashed && hk < fromHashed) {
+				data[k] = v
+			}
 		}
 	}
 
@@ -348,18 +357,26 @@ func (hn *HashTableNode) upgradeReplica(fromKey int) {
 	upgradedReplicas := make(map[int]*ReplicaInfo)
 	myhashed := hn.chord.MyId()
 
-	// This means that the fromKey ID is before 0. Eg- I am 100, fromKey is 950
-	leftboundary := myhashed < fromKey
+	// This means that the fromKey ID is before 0.
+	// Eg- I am 100, fromKey is 950, we want keys from 951 - 999 & 0 - 100
+	// If I am 950, fromKey is 100, we want keys from 101 - 950
+	IamSmaller := myhashed < fromKey
 
 	for k, v := range hn.replicas {
 		// If this replica is one of the ones within the desired ones,
 		// we can upgrade this replica and move it to data.
 		// If not, it stays as replicas.
 		// The range is all key I know of from the desired key
-		if leftboundary && k > fromKey && k <= myhashed {
-			hn.data.AddRange(v.Replica.Data)
-			upgradedReplicas[k] = v
-		} else if !leftboundary && k > fromKey {
+		if IamSmaller {
+			// key must be less than both or greater than both
+			// If I am 100, fromKey is 950, we want 0-100 & 950 - 999
+			if (k > fromKey && k >= myhashed) || (k <= fromKey && k <= myhashed) {
+				hn.data.AddRange(v.Replica.Data)
+				upgradedReplicas[k] = v
+			} else {
+				newreplicas[k] = v
+			}
+		} else if !IamSmaller && k > fromKey && k <= myhashed {
 			hn.data.AddRange(v.Replica.Data)
 			upgradedReplicas[k] = v
 		} else {
@@ -411,21 +428,31 @@ func (hn *HashTableNode) downgradePrimary(newPrimary NodeId, toKey int) {
 
 	myhashed := hn.chord.MyId()
 
-	// This means that the toKey is before 0. Eg- I am 100, toKey is 950
-	leftboundary := myhashed < toKey
+	// This means that the toKey is before 0.
+	// Eg- I am 100, toKey is 950 ; we want keys from 101-950
+	// If I am 950, toKey is 100; we want keys from 951 - 999 & 0 - 100
+	IamSmaller := myhashed < toKey
 
 	for k, v := range hn.data.Data {
 		hk := common.KeyHash(k)
 		// All keys until the new toKey can be downgraded from the primary
 		// Presumably, all keys until toKey will now be handled by the newPrimary
-		if leftboundary && hk <= toKey && hk > myhashed {
-			newreplica.Replica.Put(k, v)
-			oldData[k] = v
-		} else if !leftboundary && hk <= toKey {
-			newreplica.Replica.Put(k, v)
-			oldData[k] = v
+		// key must be less than both or greater than both
+		if IamSmaller {
+			if hk <= toKey && hk > myhashed {
+				newreplica.Replica.Put(k, v)
+				oldData[k] = v
+			} else {
+				newdata.Put(k, v)
+			}
 		} else {
-			newdata.Put(k, v)
+			// if I am 950 and tokey is 100; we want 950 - 999 & 0 - 100
+			if (hk > myhashed && hk >= toKey) || (hk <= toKey && hk <= myhashed) {
+				newreplica.Replica.Put(k, v)
+				oldData[k] = v
+			} else {
+				newdata.Put(k, v)
+			}
 		}
 	}
 
