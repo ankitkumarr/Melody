@@ -18,8 +18,10 @@ const RpcTimeout = 5 * time.Second
 const RpcPath = "/_goRPC_HashTable"
 const RpcDebugPath = "/debug/rpc_HashTable"
 const DhtDebug = 0
+const RpcDefaultRetryCount = 5
+const RpcRetryMilliSeconds = 100
 
-var debugStart time.Time = time.Now()
+// var debugStart time.Time = time.Now()
 
 type HashTableNode struct {
 	id            string
@@ -396,23 +398,26 @@ func (hn *HashTableNode) upgradeReplica(fromKey int) {
 	hn.dataDebugLog("My dataset looks like %v", hn.data)
 
 	for _, ur := range upgradedReplicas {
-		for _, successor := range succ {
-			// TODO: Add retries for this rpc
-			// TODO: This can be parallelized
+		// No data to move
+		if len(ur.Replica.Data) == 0 {
+			continue
+		}
 
-			// No data to move
-			if len(ur.Replica.Data) == 0 {
-				continue
-			}
-			args := MoveReplicasArgs{FromId: ur.Node, ToId: myNode, Data: ur.Replica.Data}
-			reply := MoveReplicasReply{}
-			hn.debugLog("Calling moveReplica on %v for %v key vals to be moved from %v to %v", successor.StringID, len(ur.Replica.Data), ur.Node.Uid, myNode.Uid)
-			common.Call(successor.Addr, RpcPath, "HashTableNode.MoveReplicas", &args, &reply, RpcTimeout)
-			if !reply.Success {
-				// log.Printf("Did not receive a success response when attempting to move replicas. Error: %v", reply.Err)
-				hn.debugLog("Did not receive a success response when attempting to move replicas. Error: %v", reply.Err)
-			} else {
-				hn.debugLog("MoveReplica for %v key vals to be moved from %v to %v succeeded", len(ur.Replica.Data), ur.Node.Uid, myNode.Uid)
+		for _, successor := range succ {
+			// TODO: This can be parallelized
+			for i := 0; i < RpcDefaultRetryCount; i++ {
+				args := MoveReplicasArgs{FromId: ur.Node, ToId: myNode, Data: ur.Replica.Data}
+				reply := MoveReplicasReply{}
+				hn.debugLog("Calling moveReplica on %v for %v key vals to be moved from %v to %v", successor.StringID, len(ur.Replica.Data), ur.Node.Uid, myNode.Uid)
+				common.Call(successor.Addr, RpcPath, "HashTableNode.MoveReplicas", &args, &reply, RpcTimeout)
+				if !reply.Success {
+					// log.Printf("Did not receive a success response when attempting to move replicas. Error: %v", reply.Err)
+					hn.debugLog("Did not receive a success response when attempting to move replicas. Error: %v", reply.Err)
+				} else {
+					hn.debugLog("MoveReplica for %v key vals to be moved from %v to %v succeeded", len(ur.Replica.Data), ur.Node.Uid, myNode.Uid)
+					break
+				}
+				time.Sleep(time.Millisecond * RpcRetryMilliSeconds)
 			}
 		}
 	}
@@ -465,23 +470,26 @@ func (hn *HashTableNode) downgradePrimary(newPrimary NodeId, toKey int) {
 	hn.mu.Unlock()
 	defer hn.mu.Lock()
 
+	// No data to move
+	if len(oldData) == 0 {
+		return
+	}
+
 	for _, successor := range succ {
 		// Move the data that I was replicating to be now owned by the new primary node
-		// TODO: Add retries for this rpc
 		// TODO: This can be parallelized
-
-		// No data to move
-		if len(oldData) == 0 {
-			continue
-		}
-		args := MoveReplicasArgs{FromId: myNode, ToId: newPrimary, Data: oldData}
-		reply := MoveReplicasReply{}
-		hn.debugLog("Calling moveReplica on %v for %v key vals to be moved from %v to %v", successor.StringID, len(oldData), myNode.Uid, newPrimary.Uid)
-		common.Call(successor.Addr, RpcPath, "HashTableNode.MoveReplicas", &args, &reply, RpcTimeout)
-		if !reply.Success {
-			log.Printf("Did not receive a success response when attempting to move replicas. Error: %v", reply.Err)
-		} else {
-			hn.debugLog("MoveReplica on %v for %v key vals to be moved from %v to %v succeeded", successor.StringID, len(oldData), myNode.Uid, newPrimary.Uid)
+		for i := 0; i < RpcDefaultRetryCount; i++ {
+			args := MoveReplicasArgs{FromId: myNode, ToId: newPrimary, Data: oldData}
+			reply := MoveReplicasReply{}
+			hn.debugLog("Calling moveReplica on %v for %v key vals to be moved from %v to %v", successor.StringID, len(oldData), myNode.Uid, newPrimary.Uid)
+			common.Call(successor.Addr, RpcPath, "HashTableNode.MoveReplicas", &args, &reply, RpcTimeout)
+			if !reply.Success {
+				hn.debugLog("Did not receive a success response when attempting to move replicas. Error: %v", reply.Err)
+			} else {
+				hn.debugLog("MoveReplica on %v for %v key vals to be moved from %v to %v succeeded", successor.StringID, len(oldData), myNode.Uid, newPrimary.Uid)
+				break
+			}
+			time.Sleep(time.Millisecond * RpcRetryMilliSeconds)
 		}
 	}
 }
@@ -523,9 +531,7 @@ func (hn *HashTableNode) ReplicatePut(args *ReplicatePutArgs, reply *ReplicatePu
 // Called by the application to get a key from the DHT
 //
 func (hn *HashTableNode) Get(key string) interface{} {
-	// TODO: Currently this will infinitely attempt to find the key
-	// This needs to be fixed to know when key is not present, and only retry a specific number of iterations.
-	for {
+	for i := 0; i < RpcDefaultRetryCount; i++ {
 		hn.debugLog("Melody called GET for %v", key)
 		hn.mu.Lock()
 		if v, ok := hn.data.Get(key); ok {
@@ -550,9 +556,6 @@ func (hn *HashTableNode) Get(key string) interface{} {
 		add, _, _ := hn.chord.Lookup(keyHashed)
 		hn.debugLog("Chord returned %v is responsible for key %v", add, key)
 
-		// My key
-		// Right now chord does not implement IsMyKey
-		// TODO: Either remove IsMyKey or remove this
 		if add == hn.address {
 			hn.mu.Lock()
 			defer hn.mu.Unlock()
@@ -570,18 +573,19 @@ func (hn *HashTableNode) Get(key string) interface{} {
 		} else {
 			hn.debugLog("GetValue call for key %v to address %v failed. Retrying the entire ordeal...", key, add)
 		}
+		time.Sleep(time.Millisecond * 500)
 	}
+	log.Fatalf("Could not communicate with Chord ring to get the required data. Quitting...")
+	return ""
 }
 
 //
 // Called by the application to put a key value in the DHT
 //
 func (hn *HashTableNode) Put(key string, value interface{}) bool {
-	// TODO: Currently this will infinitely attempt to find the key
-	// This needs to be fixed to know when key is not present, and only retry a specific number of iterations.
 	hn.debugLog("Melody called PUT for %v with value %v", key, value)
 	keyHashed := common.KeyHash(key)
-	for {
+	for i := 0; i < RpcDefaultRetryCount; i++ {
 		hn.mu.Lock()
 		if _, ok := hn.data.Get(key); ok || hn.chord.IsMyKey(keyHashed) {
 			hn.localPutAndReplicate(key, value)
@@ -600,9 +604,6 @@ func (hn *HashTableNode) Put(key string, value interface{}) bool {
 		add, _, _ := hn.chord.Lookup(keyHashed)
 		hn.debugLog("Chord returned %v is responsible for key %v", add, key)
 
-		// My key
-		// Right now chord does not implement IsMyKey
-		// TODO: Either remove IsMyKey or remove this
 		if add == hn.address {
 			hn.mu.Lock()
 			defer hn.mu.Unlock()
@@ -619,7 +620,10 @@ func (hn *HashTableNode) Put(key string, value interface{}) bool {
 		} else {
 			hn.debugLog("PutValue call for key %v to address %v failed. Retrying the entire ordeal...", key, add)
 		}
+		time.Sleep(500 * time.Millisecond)
 	}
+	log.Fatalf("Could not communicate with Chord ring to get the required data. Quitting...")
+	return false
 }
 
 func (hn *HashTableNode) localPutAndReplicate(key string, value interface{}) {
@@ -630,7 +634,7 @@ func (hn *HashTableNode) localPutAndReplicate(key string, value interface{}) {
 	defer hn.mu.Lock()
 
 	for _, su := range succ {
-		for i := 0; i < 5; i++ {
+		for i := 0; i < RpcDefaultRetryCount; i++ {
 			hn.debugLog("Attempting to replicate put call for key %v, value %v to address %v", key, value, su.Addr)
 			myNode := NodeId{Uid: hn.chord.MyRawId(), HashedUid: hn.chord.MyId()}
 			args := ReplicatePutArgs{Key: key, Value: value, DhtId: myNode}
@@ -642,10 +646,10 @@ func (hn *HashTableNode) localPutAndReplicate(key string, value interface{}) {
 			} else {
 				hn.debugLog("Replicate put call for key %v, value %v to address %v failed. Error: %v. May retry..", key, value, su.Addr, reply.Err)
 			}
-			time.Sleep(100 * time.Millisecond)
 			if i == 4 {
-				hn.debugLog("Could not replicate data. This can be ignored later. For now, let's be stricter.")
+				hn.debugLog("Could not replicate data. This may lead to data loss. Ignoring...")
 			}
+			time.Sleep(100 * time.Millisecond)
 		}
 	}
 }
@@ -710,9 +714,6 @@ func (hn *HashTableNode) PutValue(args *PutValueArgs, reply *PutValueReply) erro
 }
 
 func (hn *HashTableNode) predecessorChanged(old chord.NodeInfo, new chord.NodeInfo) {
-	// TODO: might need to use the Chord approximation mod function
-
-	// TODO: THIS IS TEMPORARY. SHOULD NOT LOCK HERE
 	hn.mu.Lock()
 	defer hn.mu.Unlock()
 
@@ -756,8 +757,8 @@ func (hn *HashTableNode) predecessorChanged(old chord.NodeInfo, new chord.NodeIn
 }
 
 func (hn *HashTableNode) joined(successor chord.NodeInfo) {
+	// Retry forever here, because without joining, one can't do much
 	for {
-		// TODO: THIS IS TEMPORARY. SHOULD NOT LOCK HERE
 		hn.debugLog("I joined the ring. Need data until %v from %v at address %v", successor.Id, successor.StringID, successor.Addr)
 		myId := NodeId{Uid: hn.chord.MyRawId(), HashedUid: hn.chord.MyId()}
 		args := GetMyDataArgs{DhtId: myId}
@@ -804,8 +805,6 @@ func (hn *HashTableNode) monitorChordChanges() {
 }
 
 func (hn *HashTableNode) successorChanged(oldsuccessors []chord.NodeInfo, newSuccessors []chord.NodeInfo) {
-	// TODO: THIS IS TEMPORARY. SHOULD NOT LOCK HERE
-
 	oldMap := make(map[string]chord.NodeInfo)
 	newMap := make(map[string]chord.NodeInfo)
 	fixedNewSuccessors := make([]chord.NodeInfo, 0)
@@ -820,7 +819,7 @@ func (hn *HashTableNode) successorChanged(oldsuccessors []chord.NodeInfo, newSuc
 		if v.Addr == "" || v.Id == 0 {
 			continue
 		}
-		// TODO: This is temporary. Chord currenly can make itself its own successor. We address that in Chord
+		// TODO: This is temporary. Chord currenly can make itself its own successor. We should address that in Chord
 		if v.Addr == hn.address {
 			continue
 		}
@@ -835,16 +834,19 @@ func (hn *HashTableNode) successorChanged(oldsuccessors []chord.NodeInfo, newSuc
 		myNode := NodeId{Uid: hn.chord.MyRawId(), HashedUid: common.KeyHash(hn.chord.MyRawId())}
 		for k, v := range newMap {
 			if _, ok := oldMap[k]; !ok {
-				hn.debugLog("Calling StoreReplica to replicate my data in the new successor %v with address %v", v.StringID, v.Addr)
-				// Store replicas in these new successors
-				args := StoreReplicasArgs{DhtId: myNode, Replicas: hn.data.Data}
-				reply := StoreReplicasReply{}
-				common.Call(v.Addr, RpcPath, "HashTableNode.StoreReplicas", &args, &reply, RpcTimeout)
-				// TODO: Success timeout?
-				if !reply.Success {
-					hn.debugLog("Calling StoreReplica to replicate my data in the new successor %v with address %v failed. Error: %v", v.StringID, v.Addr, reply.Err)
-				} else {
-					hn.debugLog("StoreReplica to replicate my data in the new successor %v with address %v succeeded", v.StringID, v.Addr)
+				for i := 0; i < RpcDefaultRetryCount; i++ {
+					hn.debugLog("Calling StoreReplica to replicate my data in the new successor %v with address %v", v.StringID, v.Addr)
+					// Store replicas in these new successors
+					args := StoreReplicasArgs{DhtId: myNode, Replicas: hn.data.Data}
+					reply := StoreReplicasReply{}
+					common.Call(v.Addr, RpcPath, "HashTableNode.StoreReplicas", &args, &reply, RpcTimeout)
+					if !reply.Success {
+						hn.debugLog("Calling StoreReplica to replicate my data in the new successor %v with address %v failed. Error: %v. Retrying possibly...", v.StringID, v.Addr, reply.Err)
+					} else {
+						hn.debugLog("StoreReplica to replicate my data in the new successor %v with address %v succeeded", v.StringID, v.Addr)
+						break
+					}
+					time.Sleep(time.Millisecond * RpcRetryMilliSeconds)
 				}
 			}
 		}
