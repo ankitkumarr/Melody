@@ -1,21 +1,16 @@
 package common
 
 import (
-	"bytes"
 	"crypto/sha1"
 	"encoding/binary"
 	"math"
 )
 
 func KeyHash(key string) int {
-	h := sha1.New()
-	h.Write([]byte(key))
-
-	bs := h.Sum(nil)
-	buf := bytes.NewBuffer(bs[:])
-
-	var sum int
-	binary.Read(buf, binary.LittleEndian, &sum)
-
-	return sum % int(math.Pow(2, 31))
+	// This isn't the best way to get a consistent int hash
+	// But it will get the job done for our scope
+	hashBytes := sha1.Sum([]byte(key))
+	hashedInt64 := binary.BigEndian.Uint64(hashBytes[:])
+	smallerInt64 := hashedInt64 % uint64(math.Pow(2, 10))
+	return int(smallerInt64)
 }
