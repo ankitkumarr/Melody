@@ -20,7 +20,25 @@ sleep 1
 
 id=33
 port=8003
-for (( i=2 ; i<10 ; i++ )) ; do
+for (( i=2 ; i<5 ; i++ )) ; do
+    $TIMEOUT ./main $id $port false 22 127.0.0.1:8002 &
+    pid[$i]=$!
+    id=$(($id + 11))
+    port=$(($port + 1))
+    sleep 1
+done
+
+echo "Adding a key through some of the first nodes"
+for (( i=0 ; i<5 ; i++ )) ; do
+    add=$(($i + 8001))
+    response=$(curl "localhost:$add/dhtput?key=$i&value=$i$i")
+    if [[ $response != "Add key $i: $i$i to the DHT" ]] ; then
+        echo "PUT failed"
+        kill_all
+    fi
+done
+
+for (( i=5 ; i<10 ; i++ )) ; do
     $TIMEOUT ./main $id $port false 22 127.0.0.1:8002 &
     pid[$i]=$!
     id=$(($id + 11))
@@ -33,6 +51,13 @@ kill_all () {
         kill ${pid[$i]}
     done
     exit 1
+}
+
+kill_all_success() {
+    for (( i=2 ; i<10 ; i++ )) ; do
+        kill ${pid[$i]}
+    done
+    exit 0
 }
 
 trap "kill_all" INT
@@ -58,8 +83,8 @@ if [[ $response != "Retrieved value for key foo: bar" ]] ; then
 fi
 
 echo "BASIC TEST PASSED!"
-echo "Now adding a key through every node"
-for (( i=0 ; i<10 ; i++ )) ; do
+echo "Now adding a key through every node (rest of the nodes)"
+for (( i=5 ; i<10 ; i++ )) ; do
     add=$(($i + 8001))
     response=$(curl "localhost:$add/dhtput?key=$i&value=$i$i")
     if [[ $response != "Add key $i: $i$i to the DHT" ]] ; then
@@ -125,8 +150,8 @@ echo "ALL TESTS PASSED!"
 # wait ${pid[9]}
 # wait ${pid[8]}
 
-kill_all
 rm -f ./main
+kill_all_success
 
 # echo "Press Ctrl C to exit..."
 # wait $pid

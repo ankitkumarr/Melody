@@ -17,12 +17,13 @@ import (
 const RpcTimeout = 5 * time.Second
 const RpcPath = "/_goRPC_HashTable"
 const RpcDebugPath = "/debug/rpc_HashTable"
-const DhtDebug = 1
+const DhtDebug = 0
 
 var debugStart time.Time = time.Now()
 
 type HashTableNode struct {
 	id            string
+	hashedId      int
 	data          HashData
 	replicas      map[int]*ReplicaInfo
 	chord         *chord.Node
@@ -112,6 +113,7 @@ type GetMyDataReply struct {
 func Make(ch *chord.Node, id string, address string, chordChangeCh chan chord.ChangeNotifyMsg) *HashTableNode {
 	htNode := HashTableNode{}
 	htNode.id = id
+	htNode.hashedId = common.KeyHash(id)
 	htNode.chord = ch
 	htNode.address = address
 	htNode.chordChangeCh = chordChangeCh
@@ -136,9 +138,15 @@ func (hn *HashTableNode) debugLog(format string, a ...interface{}) {
 		// time := time.Since(debugStart).Microseconds()
 		// time /= 100
 		time := time.Now()
-		prefix := fmt.Sprintf("%02d:%02d:%02d:%2d [%v] [%v]: ", time.Hour(), time.Minute(), time.Second(), time.UnixMilli(), hn.address, hn.id)
+		prefix := fmt.Sprintf("%02d:%02d:%02d:%2d [%v] [%v] [%v] [pre: %v]: ", time.Hour(), time.Minute(), time.Second(), time.UnixMilli(), hn.address, hn.id, hn.hashedId, hn.lastknownPred.Id)
 		format = prefix + format
 		log.Printf(format, a...)
+	}
+}
+
+func (hn *HashTableNode) dataDebugLog(format string, a ...interface{}) {
+	if DhtDebug > 1 {
+		hn.debugLog(format, a)
 	}
 }
 
@@ -308,15 +316,21 @@ func (hn *HashTableNode) GetMyData(args *GetMyDataArgs, reply *GetMyDataReply) e
 	}
 
 	data := make(map[string]interface{})
+	myhashed := hn.chord.MyId()
+
+	// This means that the requester's ID is before 0. Eg- I am 100, requestor is 950
+	leftboundary := myhashed < fromHashed
 
 	for k, v := range hn.data.Data {
 		hk := common.KeyHash(k)
-		if hk <= fromHashed {
+		if leftboundary && hk <= fromHashed && hk > myhashed {
+			data[k] = v
+		} else if !leftboundary && hk <= fromHashed {
 			data[k] = v
 		}
 	}
 
-	hn.debugLog("GetMyData call to get all data before %v succeeded", args.DhtId.Uid)
+	hn.debugLog("GetMyData call to get all data before %v succeeded with %v entries", args.DhtId.Uid, len(data))
 	reply.Data = data
 	reply.Success = true
 	return nil
@@ -332,13 +346,20 @@ func (hn *HashTableNode) upgradeReplica(fromKey int) {
 	// This can be optimized.
 	newreplicas := make(map[int]*ReplicaInfo)
 	upgradedReplicas := make(map[int]*ReplicaInfo)
+	myhashed := hn.chord.MyId()
+
+	// This means that the fromKey ID is before 0. Eg- I am 100, fromKey is 950
+	leftboundary := myhashed < fromKey
 
 	for k, v := range hn.replicas {
 		// If this replica is one of the ones within the desired ones,
 		// we can upgrade this replica and move it to data.
 		// If not, it stays as replicas.
 		// The range is all key I know of from the desired key
-		if k >= fromKey {
+		if leftboundary && k > fromKey && k <= myhashed {
+			hn.data.AddRange(v.Replica.Data)
+			upgradedReplicas[k] = v
+		} else if !leftboundary && k > fromKey {
 			hn.data.AddRange(v.Replica.Data)
 			upgradedReplicas[k] = v
 		} else {
@@ -354,6 +375,8 @@ func (hn *HashTableNode) upgradeReplica(fromKey int) {
 	myNode := NodeId{Uid: hn.chord.MyRawId(), HashedUid: common.KeyHash(hn.chord.MyRawId())}
 
 	hn.debugLog("Upgraded %v replica sets to primary. Need to Move these replicas for my successors", len(upgradedReplicas))
+	hn.dataDebugLog("I have replicas that look like %v", hn.replicas)
+	hn.dataDebugLog("My dataset looks like %v", hn.data)
 
 	for _, ur := range upgradedReplicas {
 		for _, successor := range succ {
@@ -386,11 +409,19 @@ func (hn *HashTableNode) downgradePrimary(newPrimary NodeId, toKey int) {
 	newdata := HashData{}
 	oldData := make(map[string]interface{})
 
+	myhashed := hn.chord.MyId()
+
+	// This means that the toKey is before 0. Eg- I am 100, toKey is 950
+	leftboundary := myhashed < toKey
+
 	for k, v := range hn.data.Data {
 		hk := common.KeyHash(k)
 		// All keys until the new toKey can be downgraded from the primary
 		// Presumably, all keys until toKey will now be handled by the newPrimary
-		if hk <= toKey {
+		if leftboundary && hk <= toKey && hk > myhashed {
+			newreplica.Replica.Put(k, v)
+			oldData[k] = v
+		} else if !leftboundary && hk <= toKey {
 			newreplica.Replica.Put(k, v)
 			oldData[k] = v
 		} else {
@@ -451,6 +482,7 @@ func (hn *HashTableNode) ReplicatePut(args *ReplicatePutArgs, reply *ReplicatePu
 		ri := ReplicaInfo{}
 		ri.Node = args.DhtId
 		ri.Replica = HashData{}
+		hn.replicas[hashedId] = &ri
 	}
 
 	hn.replicas[hashedId].Replica.Put(args.Key, args.Value)
@@ -573,14 +605,15 @@ func (hn *HashTableNode) localPutAndReplicate(key string, value interface{}) {
 	for _, su := range succ {
 		for i := 0; i < 5; i++ {
 			hn.debugLog("Attempting to replicate put call for key %v, value %v to address %v", key, value, su.Addr)
-			args := PutValueArgs{Key: key, Value: value}
-			reply := PutValueReply{}
+			myNode := NodeId{Uid: hn.chord.MyRawId(), HashedUid: hn.chord.MyId()}
+			args := ReplicatePutArgs{Key: key, Value: value, DhtId: myNode}
+			reply := ReplicatePutReply{}
 			ok := common.Call(su.Addr, RpcPath, "HashTableNode.ReplicatePut", &args, &reply, RpcTimeout)
-			if ok {
+			if ok && reply.Success {
 				hn.debugLog("Replicate put call for key %v, value %v to address %v succeeded", key, value, su.Addr)
 				break
 			} else {
-				hn.debugLog("Replicate put call for key %v, value %v to address %v failed. May retry..", key, value, su.Addr)
+				hn.debugLog("Replicate put call for key %v, value %v to address %v failed. Error: %v. May retry..", key, value, su.Addr, reply.Err)
 			}
 			time.Sleep(100 * time.Millisecond)
 			if i == 4 {
@@ -656,7 +689,7 @@ func (hn *HashTableNode) predecessorChanged(old chord.NodeInfo, new chord.NodeIn
 	hn.mu.Lock()
 	defer hn.mu.Unlock()
 
-	hn.debugLog("Predecessor has changed from %v to %v", old.StringID, new.StringID)
+	hn.debugLog("Predecessor has changed from %v (id: %v) to %v (id %v), my ID is %v", old.StringID, old.Id, new.StringID, new.Id, hn.chord.MyId())
 	if (old.Id <= 0 || old.Addr == "") && (hn.lastknownPred.Addr == "" || hn.lastknownPred.Id <= 0) {
 		hn.lastknownPred = new
 		newP := NodeId{HashedUid: new.Id, Uid: new.StringID}
@@ -681,7 +714,7 @@ func (hn *HashTableNode) predecessorChanged(old chord.NodeInfo, new chord.NodeIn
 	oldBetNewMe = oldBetNewMe || (old.Id > new.Id && new.Id > hn.chord.MyId() && old.Id > hn.chord.MyId())
 
 	// Example : 9, 0, 1 (new = 9, old = 0, my = 1)
-	oldBetNewMe = oldBetNewMe || (new.Id > old.Id && new.Id > hn.chord.MyId())
+	oldBetNewMe = oldBetNewMe || (new.Id > old.Id && new.Id > hn.chord.MyId() && old.Id < hn.chord.MyId())
 
 	if oldBetNewMe {
 		// Old predecessor is lost. I must promote replicas [new-key, old-key] my own.
@@ -707,7 +740,8 @@ func (hn *HashTableNode) joined(successor chord.NodeInfo) {
 		if reply.Success {
 			hn.data = HashData{}
 			hn.data.AddRange(reply.Data)
-			hn.debugLog("Received data until %v from %v at address %v successfully. Got %v key vals", successor.Id, successor.StringID, successor.Addr, len(reply.Data))
+			hn.debugLog("Received data until %v from %v at address %v successfully. Got %v key vals. My hashId is %v.", successor.Id, successor.StringID, successor.Addr, len(reply.Data), myId.HashedUid)
+			hn.dataDebugLog("The key vals I was assigned are %v", reply.Data)
 			break
 		} else {
 			hn.debugLog("Did not receive data until %v from %v at address %v. Error: %v. Retrying forever...", successor.Id, successor.StringID, successor.Addr, reply.Err)
@@ -770,7 +804,7 @@ func (hn *HashTableNode) successorChanged(oldsuccessors []chord.NodeInfo, newSuc
 	hn.debugLog("Successors has changed from %v count to %v count", len(oldMap), len(newMap))
 
 	// No need to replicate if no data or successors to replicate
-	if len(hn.data.Data) != 0 && len(newMap) == 0 {
+	if len(hn.data.Data) != 0 && len(newMap) != 0 {
 		myNode := NodeId{Uid: hn.chord.MyRawId(), HashedUid: common.KeyHash(hn.chord.MyRawId())}
 		for k, v := range newMap {
 			if _, ok := oldMap[k]; !ok {

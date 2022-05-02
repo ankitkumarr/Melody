@@ -27,7 +27,7 @@ func call(address string, path string, rpcname string, args interface{}, reply i
 	c, err := rpc.DialHTTPPath("tcp", address, path)
 	if err != nil {
 		// log.Fatalf("Failed to connect to server with address: %v. %v", address, err)
-		fmt.Println(err)
+		// fmt.Println(err)
 		ch <- false
 		return
 	}
