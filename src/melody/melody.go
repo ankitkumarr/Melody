@@ -18,10 +18,11 @@ import (
 
 const KeywordPrefix = "__KEYWORD__"
 const FilePrefix = "__FILE__"
-const StoreDirectoryName = "MelodyFiles/"
+const StoreDirectoryBase = "MelodyFiles"
 
 type Melody struct {
 	dht     *dht.HashTableNode
+	id      int
 	address string
 }
 
@@ -35,9 +36,10 @@ type FileSeederInfo struct {
 	Seeders  []string
 }
 
-func Make(dht *dht.HashTableNode, myAdd string) Melody {
+func Make(dht *dht.HashTableNode, hashedId int, myAdd string) Melody {
 	m := Melody{}
 	m.dht = dht
+	m.id = hashedId
 	m.address = myAdd
 	gob.Register(&FileMetadata{})
 	gob.Register([]FileMetadata{})
@@ -46,8 +48,9 @@ func Make(dht *dht.HashTableNode, myAdd string) Melody {
 	return m
 }
 
-func getFile(w http.ResponseWriter, r *http.Request) {
+func (m *Melody) getFile(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if len(query["fileid"]) == 0 {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("Missing required query param 'fileid'"))
@@ -65,10 +68,10 @@ func getFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := os.Stat(StoreDirectoryName + fileid); err == nil {
+	if _, err := os.Stat(m.getStoreDirectoryName() + fileid); err == nil {
 		// Ideally this would be streamed to the client.
 		// However, loading in bytes in memory if ok for now for our prototype.
-		fileBytes, err := ioutil.ReadFile(StoreDirectoryName + fileid)
+		fileBytes, err := ioutil.ReadFile(m.getStoreDirectoryName() + fileid)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte("Failed to read file from disk"))
@@ -92,6 +95,7 @@ func nrand() int64 {
 
 func (m *Melody) addNewFile(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if len(query["filename"]) == 0 {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("Missing required query param 'filename'"))
@@ -110,8 +114,8 @@ func (m *Melody) addNewFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	os.MkdirAll(StoreDirectoryName, os.ModePerm)
-	f, err := os.Create(StoreDirectoryName + fileId)
+	os.MkdirAll(m.getStoreDirectoryName(), os.ModePerm)
+	f, err := os.Create(m.getStoreDirectoryName() + fileId)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("Error writing the file to storage"))
@@ -127,9 +131,68 @@ func (m *Melody) addNewFile(w http.ResponseWriter, r *http.Request) {
 	m.AddPeerServingFile(m.address, newfile)
 }
 
-func getFilesSeeding(w http.ResponseWriter, r *http.Request) {
-	os.MkdirAll(StoreDirectoryName, os.ModePerm)
-	files, err := ioutil.ReadDir(StoreDirectoryName)
+func (m *Melody) submitFileForSeeding(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if len(query["fileid"]) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("Missing required query param 'fileid'"))
+		return
+	}
+
+	fileId := query["fileid"][0]
+
+	fsi := m.LocateSeeders(fileId)
+	if fsi.Metadata.Id == "" || fsi.Metadata.Id != fileId {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("Could not find the fileId in the network"))
+		return
+	}
+
+	// Ideally this would be streamed to the client.
+	// However, loading in bytes in memory if ok for now for our prototype.
+	filedata, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("Could not read the file sent in the request"))
+		return
+	}
+
+	os.MkdirAll(m.getStoreDirectoryName(), os.ModePerm)
+
+	files, err := ioutil.ReadDir(m.getStoreDirectoryName())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Could not find the files being seeded"))
+		return
+	}
+
+	for _, f := range files {
+		if f.Name() == fileId {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("Already seeding file with the given ID"))
+			return
+		}
+	}
+
+	f, err := os.Create(m.getStoreDirectoryName() + fileId)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Error writing the file to storage"))
+		return
+	}
+	defer f.Close()
+	f.Write(filedata)
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(fileId))
+	m.AddPeerServingFile(m.address, fsi.Metadata)
+}
+
+func (m *Melody) getFilesSeeding(w http.ResponseWriter, r *http.Request) {
+	os.MkdirAll(m.getStoreDirectoryName(), os.ModePerm)
+	files, err := ioutil.ReadDir(m.getStoreDirectoryName())
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -157,6 +220,7 @@ func getFilesSeeding(w http.ResponseWriter, r *http.Request) {
 func (m *Melody) getNextNodes(w http.ResponseWriter, r *http.Request) {
 	nextNodes := m.dht.GetSuccessors()
 	nextNodesJson, err := json.Marshal(nextNodes)
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("Error encoding next nodes to json"))
@@ -171,6 +235,7 @@ func (m *Melody) getNextNodes(w http.ResponseWriter, r *http.Request) {
 func (m *Melody) getAllLocalKeywords(w http.ResponseWriter, r *http.Request) {
 	localdata := m.dht.GetData()
 	result := make(map[string][]FileMetadata)
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	for k, v := range localdata {
 		if strings.HasPrefix(k, KeywordPrefix) {
@@ -198,6 +263,7 @@ func (m *Melody) getAllLocalKeywords(w http.ResponseWriter, r *http.Request) {
 
 func (m *Melody) queryFiles(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if len(query["query"]) == 0 {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("Missing required query param 'query'"))
@@ -220,6 +286,7 @@ func (m *Melody) queryFiles(w http.ResponseWriter, r *http.Request) {
 
 func (m *Melody) findFile(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if len(query["fileId"]) == 0 {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("Missing required query param 'fileId'"))
@@ -254,10 +321,15 @@ func (m *Melody) setupHttpRoutes() {
 	http.HandleFunc("/queryfiles", m.queryFiles)
 	http.HandleFunc("/findfile", m.findFile)
 	http.HandleFunc("/addnewfile", m.addNewFile)
-	http.HandleFunc("/getfile", getFile)
-	http.HandleFunc("/getfilesseeding", getFilesSeeding)
+	http.HandleFunc("/getfile", m.getFile)
+	http.HandleFunc("/getfilesseeding", m.getFilesSeeding)
 	http.HandleFunc("/getnextnodes", m.getNextNodes)
 	http.HandleFunc("/getlocalkeywords", m.getAllLocalKeywords)
+	http.HandleFunc("/submitfileforseeding", m.submitFileForSeeding)
+}
+
+func (m *Melody) getStoreDirectoryName() string {
+	return StoreDirectoryBase + "_" + fmt.Sprint(m.id) + "/"
 }
 
 func (m *Melody) AddFileToIndex(f FileMetadata) {
