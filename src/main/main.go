@@ -46,7 +46,7 @@ func main() {
 	chordChangeCh := make(chan chord.ChangeNotifyMsg, 100)
 	ch := chord.Make(chord_hashed_id, chord_id, my_address, 31, create, joinNodeIdHashed, joinNodeAdd, chordChangeCh)
 	dht := dht.Make(ch, chord_id, my_address, chordChangeCh)
-	melody.Make(dht, my_address)
+	melody.Make(dht, chord_hashed_id, my_address)
 
 	httpServer(port)
 }
