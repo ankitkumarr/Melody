@@ -99,14 +99,14 @@ type ChangeNotifyMsg struct {
 	NewSuccessors     []NodeInfo
 }
 
-func (n *Node) Kill() {
+func Kill(n *Node) {
 	atomic.StoreInt32(&n.dead, 1)
 	close(n.ChangeNotifyChan)
 }
 
-func (n *Node) Restart() {
-	go n.stabilize_ticker()
-}
+// func (n *Node) restart() {
+// 	go n.stabilize_ticker()
+// }
 
 func (n *Node) killed() bool {
 	z := atomic.LoadInt32(&n.dead)
@@ -129,14 +129,14 @@ func Make(me int, stringID string, addr string, m int, createRing bool, joinNode
 	debugPath := "/debug/rpc_" + strconv.Itoa(me)
 	newServer.HandleHTTP(rpcPath, debugPath)
 	if createRing {
-		n.Create()
+		n.create()
 	} else if joinNodeId >= 0 {
 		debug_print(dJoin, "N%d just created, asked to join ring from N%d, with joinaddr %v", me, joinNodeId, joinNodeAddr)
 		joinNode := &NodeInfo{}
 		joinNode.Addr = joinNodeAddr
 		joinNode.Id = joinNodeId
 		// debug_print(dJoin, "N%d actually joining ring", me)
-		n.Join(joinNode)
+		n.join(joinNode)
 	}
 	go n.stabilize_ticker()
 	go n.check_predecessor_ticker()
@@ -180,7 +180,7 @@ func diffNotOne(start int, end int, length int) bool {
 }
 
 // create a new chord ring
-func (n *Node) Create() {
+func (n *Node) create() {
 	// clear the predecessor
 	n.mu.Lock()
 	n.predecessor = NodeInfo{}
@@ -316,7 +316,7 @@ func (n *Node) FindSuccessor(args *NodeInfo, reply *RPCReply) error {
 // }
 
 // join a chord ring containing n_current
-func (n *Node) Join(n_current *NodeInfo) {
+func (n *Node) join(n_current *NodeInfo) {
 	n.mu.Lock()
 	debug_print(dJoin, "N%d just started join, calling N%d", n.me, n_current.Id)
 	n.predecessor = NodeInfo{}
@@ -620,11 +620,11 @@ func (n *Node) Alive(args *NodeInfo, reply *RPCReply) error {
 }
 
 //
-// Lookup a given key in the chord ring
+// lookup a given key in the chord ring
 // Returns the Ip address of the chord server with the key
 // and the id of the server for debugging
 //
-func (n *Node) Lookup(key int) (string, int, string) {
+func (n *Node) lookup(key int) (string, int, string) {
 	var args NodeInfo
 	var reply RPCReply
 	args.Id = key
@@ -637,21 +637,32 @@ func (n *Node) Lookup(key int) (string, int, string) {
 }
 
 //
+// Exporting Node.Lookup this way (to avoid rpc warning)
+//
+func Lookup(n *Node, key int) (string, int, string) {
+	return n.lookup(key)
+}
+
+//
 // Lets the caller know if this chord node is responsible for the
 // specific key.
 //
-func (n *Node) IsMyKey(key int) bool {
+func (n *Node) isMyKey(key int) bool {
 	n.mu.Lock()
 	isMyKey := isInRange(n.predecessor.Id+1, n.me-1, key, n.ring_size) && diffNotOne(n.predecessor.Id, n.me, n.ring_size)
 	n.mu.Unlock()
 	return isMyKey
 }
 
-func (n *Node) MyId() int {
+func IsMyKey(n *Node, key int) bool {
+	return n.isMyKey(key)
+}
+
+func MyId(n *Node) int {
 	return n.me
 }
 
-func (n *Node) MyRawId() string {
+func MyRawId(n *Node) string {
 	// TODO: Discuss with Chen and fix
 	n.mu.Lock()
 	defer n.mu.Unlock()

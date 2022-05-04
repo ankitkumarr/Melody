@@ -14,6 +14,14 @@ import (
 	"Melody/melody"
 )
 
+const infolog = true
+
+func InfoLog(format string, a ...interface{}) {
+	if infolog {
+		log.Printf(format, a...)
+	}
+}
+
 func main() {
 	if len(os.Args) < 4 {
 		log.Fatalf("Usage: ./main <unique-id> <port> <createRing> [joinNodeId] [joinNodeAddr]")
@@ -48,6 +56,7 @@ func main() {
 	dht := dht.Make(ch, chord_id, my_address, chordChangeCh)
 	melody.Make(dht, chord_hashed_id, my_address)
 
+	InfoLog("Starting Melody, DHT and Chord server at port %v with ID %v.", port, chord_id)
 	httpServer(port)
 }
 

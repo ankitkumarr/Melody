@@ -23,6 +23,14 @@ const RpcRetryMilliSeconds = 100
 
 // var debugStart time.Time = time.Now()
 
+const infolog = true
+
+func InfoLog(format string, a ...interface{}) {
+	if infolog {
+		log.Printf(format, a...)
+	}
+}
+
 type HashTableNode struct {
 	id            string
 	hashedId      int
@@ -165,7 +173,7 @@ func (hn *HashTableNode) setupHttpRoutes() {
 		query := r.URL.Query()
 		key := query["key"][0]
 		// retrieved := ""
-		retrieved, ok := hn.Get(key).(string)
+		retrieved, ok := hn.get(key).(string)
 		if !ok {
 			retrieved = ""
 		}
@@ -176,7 +184,7 @@ func (hn *HashTableNode) setupHttpRoutes() {
 		query := r.URL.Query()
 		key := query["key"][0]
 		value := query["value"][0]
-		hn.Put(key, value)
+		hn.put(key, value)
 		io.WriteString(w, fmt.Sprintf("Add key %v: %v to the DHT\n", key, value))
 		// fmt.Println("GET params were:", r.URL.Query())
 	}
@@ -321,7 +329,7 @@ func (hn *HashTableNode) GetMyData(args *GetMyDataArgs, reply *GetMyDataReply) e
 	}
 
 	data := make(map[string]interface{})
-	myhashed := hn.chord.MyId()
+	myhashed := chord.MyId(hn.chord)
 
 	// This means that the requester's ID is before 0.
 	// Eg- I am 100, requestor is 950; I need to share 101 - 950
@@ -353,11 +361,11 @@ func (hn *HashTableNode) GetMyData(args *GetMyDataArgs, reply *GetMyDataReply) e
 // node has been changed, and now this DHT is incharge of more keys.
 // Must hold a lock when called
 //
-func (hn *HashTableNode) upgradeReplica(fromKey int) {
+func (hn *HashTableNode) upgradeReplica(fromKey int, oldstringId string) {
 	// This can be optimized.
 	newreplicas := make(map[int]*ReplicaInfo)
 	upgradedReplicas := make(map[int]*ReplicaInfo)
-	myhashed := hn.chord.MyId()
+	myhashed := chord.MyId(hn.chord)
 
 	// This means that the fromKey ID is before 0.
 	// Eg- I am 100, fromKey is 950, we want keys from 951 - 999 & 0 - 100
@@ -391,11 +399,13 @@ func (hn *HashTableNode) upgradeReplica(fromKey int) {
 	hn.mu.Unlock()
 	defer hn.mu.Lock()
 
-	myNode := NodeId{Uid: hn.chord.MyRawId(), HashedUid: common.KeyHash(hn.chord.MyRawId())}
+	myNode := NodeId{Uid: chord.MyRawId(hn.chord), HashedUid: common.KeyHash(chord.MyRawId(hn.chord))}
 
 	hn.debugLog("Upgraded %v replica sets to primary. Need to Move these replicas for my successors", len(upgradedReplicas))
 	hn.dataDebugLog("I have replicas that look like %v", hn.replicas)
 	hn.dataDebugLog("My dataset looks like %v", hn.data)
+
+	moved := false
 
 	for _, ur := range upgradedReplicas {
 		// No data to move
@@ -403,6 +413,7 @@ func (hn *HashTableNode) upgradeReplica(fromKey int) {
 			continue
 		}
 
+		moved = true
 		for _, successor := range succ {
 			// TODO: This can be parallelized
 			for i := 0; i < RpcDefaultRetryCount; i++ {
@@ -421,6 +432,10 @@ func (hn *HashTableNode) upgradeReplica(fromKey int) {
 			}
 		}
 	}
+
+	if moved {
+		InfoLog("DHT upgraded some replicas to PRIMARY (likely because %v disconnected) and requested successors to move replicas.", oldstringId)
+	}
 }
 
 //
@@ -431,7 +446,7 @@ func (hn *HashTableNode) downgradePrimary(newPrimary NodeId, toKey int) {
 	newdata := HashData{}
 	oldData := make(map[string]interface{})
 
-	myhashed := hn.chord.MyId()
+	myhashed := chord.MyId(hn.chord)
 
 	// This means that the toKey is before 0.
 	// Eg- I am 100, toKey is 950 ; we want keys from 101-950
@@ -462,7 +477,7 @@ func (hn *HashTableNode) downgradePrimary(newPrimary NodeId, toKey int) {
 	}
 
 	hn.data = newdata
-	myNode := NodeId{Uid: hn.chord.MyRawId(), HashedUid: common.KeyHash(hn.chord.MyRawId())}
+	myNode := NodeId{Uid: chord.MyRawId(hn.chord), HashedUid: common.KeyHash(chord.MyRawId(hn.chord))}
 	hn.debugLog("Downgraded %v primary data to replicas of %v. Need to ask my successors to move that data", len(oldData), newPrimary.Uid)
 
 	succ := make([]chord.NodeInfo, len(hn.successors))
@@ -492,6 +507,8 @@ func (hn *HashTableNode) downgradePrimary(newPrimary NodeId, toKey int) {
 			time.Sleep(time.Millisecond * RpcRetryMilliSeconds)
 		}
 	}
+
+	InfoLog("DHT downgraded some PRIMARY data to REPLICAs (likely because %v joined) and requested successors to move replicas.", newPrimary.Uid)
 }
 
 //
@@ -530,7 +547,7 @@ func (hn *HashTableNode) ReplicatePut(args *ReplicatePutArgs, reply *ReplicatePu
 //
 // Called by the application to get a key from the DHT
 //
-func (hn *HashTableNode) Get(key string) interface{} {
+func (hn *HashTableNode) get(key string) interface{} {
 	for i := 0; i < RpcDefaultRetryCount; i++ {
 		hn.debugLog("Melody called GET for %v", key)
 		hn.mu.Lock()
@@ -541,7 +558,7 @@ func (hn *HashTableNode) Get(key string) interface{} {
 		}
 
 		keyHashed := common.KeyHash(key)
-		if hn.chord.IsMyKey(keyHashed) {
+		if chord.IsMyKey(hn.chord, keyHashed) {
 			hn.mu.Unlock()
 			hn.debugLog("Melody called GET for %v returning nil from local", key)
 			return nil
@@ -553,7 +570,7 @@ func (hn *HashTableNode) Get(key string) interface{} {
 		args.Key = key
 
 		hn.debugLog("Asking Chord for the IP responsible for the key %v", key)
-		add, _, _ := hn.chord.Lookup(keyHashed)
+		add, _, _ := chord.Lookup(hn.chord, keyHashed)
 		hn.debugLog("Chord returned %v is responsible for key %v", add, key)
 
 		if add == hn.address {
@@ -582,12 +599,12 @@ func (hn *HashTableNode) Get(key string) interface{} {
 //
 // Called by the application to put a key value in the DHT
 //
-func (hn *HashTableNode) Put(key string, value interface{}) bool {
+func (hn *HashTableNode) put(key string, value interface{}) bool {
 	hn.debugLog("Melody called PUT for %v with value %v", key, value)
 	keyHashed := common.KeyHash(key)
 	for i := 0; i < RpcDefaultRetryCount; i++ {
 		hn.mu.Lock()
-		if _, ok := hn.data.Get(key); ok || hn.chord.IsMyKey(keyHashed) {
+		if _, ok := hn.data.Get(key); ok || chord.IsMyKey(hn.chord, keyHashed) {
 			hn.localPutAndReplicate(key, value)
 			hn.mu.Unlock()
 			hn.debugLog("Melody called PUT for %v added to local", key)
@@ -601,7 +618,7 @@ func (hn *HashTableNode) Put(key string, value interface{}) bool {
 		args.Value = value
 
 		hn.debugLog("Asking Chord for the IP responsible for the key %v", key)
-		add, _, _ := hn.chord.Lookup(keyHashed)
+		add, _, _ := chord.Lookup(hn.chord, keyHashed)
 		hn.debugLog("Chord returned %v is responsible for key %v", add, key)
 
 		if add == hn.address {
@@ -626,6 +643,10 @@ func (hn *HashTableNode) Put(key string, value interface{}) bool {
 	return false
 }
 
+func Put(hn *HashTableNode, key string, value interface{}) bool {
+	return hn.put(key, value)
+}
+
 func (hn *HashTableNode) localPutAndReplicate(key string, value interface{}) {
 	hn.data.Put(key, value)
 	succ := make([]chord.NodeInfo, len(hn.successors))
@@ -636,7 +657,7 @@ func (hn *HashTableNode) localPutAndReplicate(key string, value interface{}) {
 	for _, su := range succ {
 		for i := 0; i < RpcDefaultRetryCount; i++ {
 			hn.debugLog("Attempting to replicate put call for key %v, value %v to address %v", key, value, su.Addr)
-			myNode := NodeId{Uid: hn.chord.MyRawId(), HashedUid: hn.chord.MyId()}
+			myNode := NodeId{Uid: chord.MyRawId(hn.chord), HashedUid: chord.MyId(hn.chord)}
 			args := ReplicatePutArgs{Key: key, Value: value, DhtId: myNode}
 			reply := ReplicatePutReply{}
 			ok := common.Call(su.Addr, RpcPath, "HashTableNode.ReplicatePut", &args, &reply, RpcTimeout)
@@ -667,7 +688,7 @@ func (hn *HashTableNode) GetValue(args *GetValueArgs, reply *GetValueReply) erro
 		reply.Value = v
 		reply.Success = true
 		hn.debugLog("GetValue call for key %v succeeded with value %v", args.Key, v)
-	} else if hn.chord.IsMyKey(keyHashed) {
+	} else if chord.IsMyKey(hn.chord, keyHashed) {
 		// This means that even though I don't have the key,
 		// this key should be mine. So, we can return an empty response.
 		reply.Success = true
@@ -678,6 +699,7 @@ func (hn *HashTableNode) GetValue(args *GetValueArgs, reply *GetValueReply) erro
 		reply.Success = false
 		reply.Err = fmt.Sprintf("Hash Table Node %v does not contain Key %v.", hn.id, args.Key)
 	}
+	InfoLog("DHT Node received GET call from another DHT Node for key %v.", args.Key)
 	return nil
 }
 
@@ -695,7 +717,7 @@ func (hn *HashTableNode) PutValue(args *PutValueArgs, reply *PutValueReply) erro
 	if _, ok := hn.data.Get(args.Key); ok {
 		hn.localPutAndReplicate(args.Key, args.Value)
 		reply.Success = true
-	} else if hn.chord.IsMyKey(keyHashed) {
+	} else if chord.IsMyKey(hn.chord, keyHashed) {
 		// This means that even though I don't have the key,
 		// this key should be mine.
 		hn.localPutAndReplicate(args.Key, args.Value)
@@ -710,6 +732,7 @@ func (hn *HashTableNode) PutValue(args *PutValueArgs, reply *PutValueReply) erro
 	} else {
 		hn.debugLog("PutValue call for key %v with value %v failed because I am not responsible for that key", args.Key, args.Value)
 	}
+	InfoLog("DHT Node received PUT call from another DHT Node for key %v.", args.Key)
 	return nil
 }
 
@@ -717,7 +740,7 @@ func (hn *HashTableNode) predecessorChanged(old chord.NodeInfo, new chord.NodeIn
 	hn.mu.Lock()
 	defer hn.mu.Unlock()
 
-	hn.debugLog("Predecessor has changed from %v (id: %v) to %v (id %v), my ID is %v", old.StringID, old.Id, new.StringID, new.Id, hn.chord.MyId())
+	hn.debugLog("Predecessor has changed from %v (id: %v) to %v (id %v), my ID is %v", old.StringID, old.Id, new.StringID, new.Id, chord.MyId(hn.chord))
 	if (old.Id <= 0 || old.Addr == "") && (hn.lastknownPred.Addr == "" || hn.lastknownPred.Id <= 0) {
 		hn.lastknownPred = new
 		newP := NodeId{HashedUid: new.Id, Uid: new.StringID}
@@ -736,18 +759,18 @@ func (hn *HashTableNode) predecessorChanged(old chord.NodeInfo, new chord.NodeIn
 	hn.lastknownPred = new
 
 	// Example: 7, 8, 9 (new = 7, old = 8, my = 9)
-	oldBetNewMe := old.Id > new.Id && old.Id < hn.chord.MyId()
+	oldBetNewMe := old.Id > new.Id && old.Id < chord.MyId(hn.chord)
 
 	// Example: 8, 9, 0 (new = 8, old = 9, my = 0)
-	oldBetNewMe = oldBetNewMe || (old.Id > new.Id && new.Id > hn.chord.MyId() && old.Id > hn.chord.MyId())
+	oldBetNewMe = oldBetNewMe || (old.Id > new.Id && new.Id > chord.MyId(hn.chord) && old.Id > chord.MyId(hn.chord))
 
 	// Example : 9, 0, 1 (new = 9, old = 0, my = 1)
-	oldBetNewMe = oldBetNewMe || (new.Id > old.Id && new.Id > hn.chord.MyId() && old.Id < hn.chord.MyId())
+	oldBetNewMe = oldBetNewMe || (new.Id > old.Id && new.Id > chord.MyId(hn.chord) && old.Id < chord.MyId(hn.chord))
 
 	if oldBetNewMe {
 		// Old predecessor is lost. I must promote replicas [new-key, old-key] my own.
 		hn.debugLog("An old predecessor was lost. Need to promote replicas from %v to be my data", new.Id)
-		hn.upgradeReplica(new.Id)
+		hn.upgradeReplica(new.Id, old.StringID)
 	} else {
 		// Newer predecessor is closer to me. So, I can expire entries that are covered by this
 		newP := NodeId{HashedUid: new.Id, Uid: new.StringID}
@@ -760,7 +783,7 @@ func (hn *HashTableNode) joined(successor chord.NodeInfo) {
 	// Retry forever here, because without joining, one can't do much
 	for {
 		hn.debugLog("I joined the ring. Need data until %v from %v at address %v", successor.Id, successor.StringID, successor.Addr)
-		myId := NodeId{Uid: hn.chord.MyRawId(), HashedUid: hn.chord.MyId()}
+		myId := NodeId{Uid: chord.MyRawId(hn.chord), HashedUid: chord.MyId(hn.chord)}
 		args := GetMyDataArgs{DhtId: myId}
 		reply := GetMyDataReply{}
 		common.Call(successor.Addr, RpcPath, "HashTableNode.GetMyData", &args, &reply, RpcTimeout)
@@ -831,7 +854,7 @@ func (hn *HashTableNode) successorChanged(oldsuccessors []chord.NodeInfo, newSuc
 
 	// No need to replicate if no data or successors to replicate
 	if len(hn.data.Data) != 0 && len(newMap) != 0 {
-		myNode := NodeId{Uid: hn.chord.MyRawId(), HashedUid: common.KeyHash(hn.chord.MyRawId())}
+		myNode := NodeId{Uid: chord.MyRawId(hn.chord), HashedUid: common.KeyHash(chord.MyRawId(hn.chord))}
 		for k, v := range newMap {
 			if _, ok := oldMap[k]; !ok {
 				for i := 0; i < RpcDefaultRetryCount; i++ {
@@ -865,7 +888,7 @@ func (hn *HashTableNode) successorChanged(oldsuccessors []chord.NodeInfo, newSuc
 	hn.debugLog("Successors change handled and released lock")
 }
 
-func (hn *HashTableNode) GetSuccessors() []string {
+func (hn *HashTableNode) getSuccessors() []string {
 	hn.mu.Lock()
 	defer hn.mu.Unlock()
 
@@ -877,6 +900,18 @@ func (hn *HashTableNode) GetSuccessors() []string {
 	return successors
 }
 
-func (hn *HashTableNode) GetData() map[string]interface{} {
+func (hn *HashTableNode) getData() map[string]interface{} {
 	return hn.data.Data
+}
+
+func GetSuccessors(hn *HashTableNode) []string {
+	return hn.getSuccessors()
+}
+
+func GetData(hn *HashTableNode) map[string]interface{} {
+	return hn.getData()
+}
+
+func Get(hn *HashTableNode, key string) interface{} {
+	return hn.get(key)
 }
