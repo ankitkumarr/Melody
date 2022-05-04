@@ -159,27 +159,25 @@ for (( i=0 ; i<4 ; i++ )) ; do
 done
 
 echo "Get those keys from random nodes"
+
 response=$(curl "localhost:8001/dhtget?key=31")
 if [[ $response != "Retrieved value for key 31: 3131" ]] ; then
     echo "GET failed"
     kill_all
 fi
 
-echo "Get those keys from random nodes"
 response=$(curl "localhost:8009/dhtget?key=32")
 if [[ $response != "Retrieved value for key 32: 3232" ]] ; then
     echo "GET failed"
     kill_all
 fi
 
-echo "Get those keys from random nodes"
 response=$(curl "localhost:8003/dhtget?key=33")
 if [[ $response != "Retrieved value for key 33: 3333" ]] ; then
     echo "GET failed"
     kill_all
 fi
 
-echo "Get those keys from random nodes"
 response=$(curl "localhost:8002/dhtget?key=34")
 if [[ $response != "Retrieved value for key 34: 3434" ]] ; then
     echo "GET failed"
