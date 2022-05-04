@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/big"
@@ -77,7 +78,16 @@ func (m *Melody) getFile(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte("Failed to read file from disk"))
 			return
 		}
+
+		filedata := m.LocateSeeders(fileid)
+
+		if filedata.Metadata.Id != fileid {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("This file (although stored) is not listed in the index.ß"))
+		}
+
 		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", "attachment; filename="+filedata.Metadata.Title)
 		w.WriteHeader(http.StatusOK)
 		w.Write(fileBytes)
 	} else {
@@ -93,7 +103,7 @@ func nrand() int64 {
 	return x
 }
 
-func (m *Melody) addNewFile(w http.ResponseWriter, r *http.Request) {
+func (m *Melody) addNewFileRaw(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if len(query["filename"]) == 0 {
@@ -129,6 +139,100 @@ func (m *Melody) addNewFile(w http.ResponseWriter, r *http.Request) {
 	newfile := FileMetadata{Id: fileId, Title: filename}
 	m.AddFileToIndex(newfile)
 	m.AddPeerServingFile(m.address, newfile)
+}
+
+func (m *Melody) addNewFileForm(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	err := r.ParseMultipartForm(32 << 20)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("Could not parse form data"))
+		return
+	}
+
+	filename := r.Form.Get("name")
+	fileId := fmt.Sprintf("%v", nrand())
+
+	receivedFile, _, err := r.FormFile("file")
+
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("Could not read file from the form data"))
+		return
+	}
+
+	os.MkdirAll(m.getStoreDirectoryName(), os.ModePerm)
+	f, err := os.Create(m.getStoreDirectoryName() + fileId)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Error writing the file to storage"))
+		return
+	}
+	defer f.Close()
+	io.Copy(f, receivedFile)
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(fileId))
+
+	newfile := FileMetadata{Id: fileId, Title: filename}
+	m.AddFileToIndex(newfile)
+	m.AddPeerServingFile(m.address, newfile)
+}
+
+func (m *Melody) submitFileForSeedingForm(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	err := r.ParseMultipartForm(32 << 20)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("Could not parse form data"))
+		return
+	}
+
+	fileId := r.Form.Get("fileid")
+	receivedFile, _, err := r.FormFile("file")
+
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("Could not read file from the form data"))
+		return
+	}
+
+	fsi := m.LocateSeeders(fileId)
+	if fsi.Metadata.Id == "" || fsi.Metadata.Id != fileId {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("Could not find the fileId in the network"))
+		return
+	}
+	os.MkdirAll(m.getStoreDirectoryName(), os.ModePerm)
+
+	files, err := ioutil.ReadDir(m.getStoreDirectoryName())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Could not find the files being seeded"))
+		return
+	}
+
+	for _, f := range files {
+		if f.Name() == fileId {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("Already seeding file with the given ID"))
+			return
+		}
+	}
+
+	f, err := os.Create(m.getStoreDirectoryName() + fileId)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Error writing the file to storage"))
+		return
+	}
+	defer f.Close()
+	io.Copy(f, receivedFile)
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(fileId))
+	m.AddPeerServingFile(m.address, fsi.Metadata)
 }
 
 func (m *Melody) submitFileForSeeding(w http.ResponseWriter, r *http.Request) {
@@ -218,7 +322,7 @@ func (m *Melody) getFilesSeeding(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Melody) getNextNodes(w http.ResponseWriter, r *http.Request) {
-	nextNodes := m.dht.GetSuccessors()
+	nextNodes := dht.GetSuccessors(m.dht)
 	nextNodesJson, err := json.Marshal(nextNodes)
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if err != nil {
@@ -233,7 +337,7 @@ func (m *Melody) getNextNodes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Melody) getAllLocalKeywords(w http.ResponseWriter, r *http.Request) {
-	localdata := m.dht.GetData()
+	localdata := dht.GetData(m.dht)
 	result := make(map[string][]FileMetadata)
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -318,10 +422,15 @@ func (m *Melody) findFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Melody) setupHttpRoutes() {
+	// APIs for client
 	http.HandleFunc("/queryfiles", m.queryFiles)
 	http.HandleFunc("/findfile", m.findFile)
-	http.HandleFunc("/addnewfile", m.addNewFile)
+	http.HandleFunc("/addnewfileform", m.addNewFileForm)
 	http.HandleFunc("/getfile", m.getFile)
+	http.HandleFunc("/submitfileforseedingform", m.submitFileForSeedingForm)
+
+	// Support for authority mostly
+	http.HandleFunc("/addnewfileraw", m.addNewFileRaw)
 	http.HandleFunc("/getfilesseeding", m.getFilesSeeding)
 	http.HandleFunc("/getnextnodes", m.getNextNodes)
 	http.HandleFunc("/getlocalkeywords", m.getAllLocalKeywords)
@@ -341,16 +450,16 @@ func (m *Melody) AddFileToIndex(f FileMetadata) {
 		// TODO: There's a race here. We may need to add a version number info in DHT, or
 		// have the DHT itself supply and Append in place operation.
 		// TODO: We need to make sure get and set operations are atomic.
-		val := m.dht.Get(key)
+		val := dht.Get(m.dht, key)
 
 		if val == nil {
 			newval := make([]FileMetadata, 1)
 			newval[0] = f
-			m.dht.Put(key, newval)
+			dht.Put(m.dht, key, newval)
 		} else {
 			if files, ok := val.([]FileMetadata); ok {
 				files = append(files, f)
-				m.dht.Put(key, files)
+				dht.Put(m.dht, key, files)
 			} else {
 				log.Fatalf("Invalid data in DHT. Expected File Metadata for key %v. Found %v", key, val)
 			}
@@ -365,7 +474,7 @@ func (m *Melody) LookupFiles(query string) []FileMetadata {
 
 	for _, word := range keywords {
 		key := fmt.Sprintf("%v%v", KeywordPrefix, word)
-		val := m.dht.Get(key)
+		val := dht.Get(m.dht, key)
 
 		if val != nil {
 			if files, ok := val.([]FileMetadata); ok {
@@ -385,7 +494,7 @@ func (m *Melody) AddPeerServingFile(peerAddress string, f FileMetadata) {
 	// TODO: There's a race here. We may need to add a version number info in DHT, or
 	// have the DHT itself supply and Append in place operation.
 	// TODO: We need to make sure get and set operations are atomic.
-	val := m.dht.Get(key)
+	val := dht.Get(m.dht, key)
 
 	if val == nil {
 		newval := make([]string, 1)
@@ -393,11 +502,11 @@ func (m *Melody) AddPeerServingFile(peerAddress string, f FileMetadata) {
 		seederInfo := FileSeederInfo{}
 		seederInfo.Metadata = f
 		seederInfo.Seeders = newval
-		m.dht.Put(key, seederInfo)
+		dht.Put(m.dht, key, seederInfo)
 	} else {
 		if seederInfo, ok := val.(FileSeederInfo); ok {
 			seederInfo.Seeders = append(seederInfo.Seeders, peerAddress)
-			m.dht.Put(key, seederInfo)
+			dht.Put(m.dht, key, seederInfo)
 		} else {
 			log.Fatalf("Invalid data in DHT. Expected FileSeederInfo for key %v.", key)
 		}
@@ -406,7 +515,7 @@ func (m *Melody) AddPeerServingFile(peerAddress string, f FileMetadata) {
 
 func (m *Melody) LocateSeeders(fileId string) FileSeederInfo {
 	key := fmt.Sprintf("%v%v", FilePrefix, fileId)
-	val := m.dht.Get(key)
+	val := dht.Get(m.dht, key)
 
 	if val == nil {
 		return FileSeederInfo{}

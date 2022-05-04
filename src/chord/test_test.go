@@ -95,7 +95,7 @@ func GenericTest(t *testing.T, leave bool) {
 			query_node := rand.Intn(i + 1)
 			keyN := rand.Intn(ring_size)
 			log.Printf("iteration %v, # %v, key value %v\n", i, j, keyN)
-			_, suc_id, _ := chord_nodes[query_node].Lookup(keyN)
+			_, suc_id, _ := Lookup(chord_nodes[query_node], keyN)
 
 			if i == 0 {
 				if suc_id != ids[0] {
@@ -153,7 +153,7 @@ func GenericTest(t *testing.T, leave bool) {
 			log.Printf("just shut down N%d listener\n", to_leave_ids[i])
 			// http_servers[index].Close()
 			log.Printf("just shut down N%d http server\n", to_leave_ids[i])
-			chord_nodes[index].Kill()
+			Kill(chord_nodes[index])
 			log.Printf("just shut down N%d\n", to_leave_ids[i])
 			// wait for create or join to complete
 			time.Sleep(100 * time.Millisecond)
@@ -227,7 +227,7 @@ func GenericTest(t *testing.T, leave bool) {
 				}
 				keyN := rand.Intn(ring_size)
 				log.Printf("iteration after shutdown %v, # %v, key value %v\n", i, j, keyN)
-				_, suc_id, _ := chord_nodes[index].Lookup(keyN)
+				_, suc_id, _ := Lookup(chord_nodes[index], keyN)
 
 				if i == n_nodes-2 {
 					if suc_id != to_leave_ids[n_nodes-1] {
