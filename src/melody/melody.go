@@ -37,6 +37,14 @@ type FileSeederInfo struct {
 	Seeders  []string
 }
 
+const infolog = true
+
+func InfoLog(format string, a ...interface{}) {
+	if infolog {
+		log.Printf(format, a...)
+	}
+}
+
 func Make(dht *dht.HashTableNode, hashedId int, myAdd string) Melody {
 	m := Melody{}
 	m.dht = dht
@@ -59,6 +67,8 @@ func (m *Melody) getFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fileid := query["fileid"][0]
+
+	InfoLog("MELODY revceived request to get file with id %v.", fileid)
 
 	// This is important to also avoid attacks where people may pass filenames
 	// such as "../../etc/passwd". Not today, hackers!
@@ -154,6 +164,14 @@ func (m *Melody) addNewFileForm(w http.ResponseWriter, r *http.Request) {
 	filename := r.Form.Get("name")
 	fileId := fmt.Sprintf("%v", nrand())
 
+	if filename == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("Could read the file name from file"))
+		return
+	}
+
+	InfoLog("MELODY Received request to add new file with title %v", filename)
+
 	receivedFile, _, err := r.FormFile("file")
 
 	if err != nil {
@@ -190,6 +208,15 @@ func (m *Melody) submitFileForSeedingForm(w http.ResponseWriter, r *http.Request
 	}
 
 	fileId := r.Form.Get("fileid")
+
+	if fileId == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("Could not read file name the form data"))
+		return
+	}
+
+	InfoLog("MELODY received request for submitting file for seeding with ID %v", fileId)
+
 	receivedFile, _, err := r.FormFile("file")
 
 	if err != nil {
@@ -375,6 +402,9 @@ func (m *Melody) queryFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	searchQuery := query["query"][0]
+
+	InfoLog("MELODY revceived request to search files with query %v.", searchQuery)
+
 	files := m.LookupFiles(searchQuery)
 	filesjson, err := json.Marshal(files)
 	if err != nil {
@@ -398,6 +428,8 @@ func (m *Melody) findFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fileId := query["fileId"][0]
+
+	InfoLog("MELODY revceived request to lookup file with id %v.", fileId)
 
 	// This is important to also avoid attacks where people may pass fileIds
 	// such as "../../etc/passwd". Not today, hackers!
