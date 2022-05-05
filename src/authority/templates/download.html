@@ -1,11 +1,18 @@
 {% extends "template.html" %}
 {% block content %}
+    <script>
+        async function dodownload() {
+            window.location.href='/downloads/{{ playlisttitle }}/{{ index }}?cost_accepted={{ cost }}';
+            await new Promise(resolve=>setTimeout(resolve, 1000));
+            window.location.href='/downloads/{{ playlisttitle }}/{{ index }}';
+        }
+    </script>
 <h2>{{ videodata["title"] }}</h2>
 <h3>From playlist: <a href="/playlists/{{ playlisttitle }}">{{ playlisttitle }}</a></h3>
 <hr>
 <p>{{ videodata["desc"] }}</p>
 <hr>
-<button onclick="window.location.href='/downloads/{{ playlisttitle }}/{{ index }}?cost_accepted=true'">Download this video for {{ cost }} points.</button>
+<button onclick="dodownload()">Download this video for {{ cost }} points.</button>
 {% if error != None %}
 <div class="errormessage" style="color: red;">{{ error }}</div>
 {% endif %}

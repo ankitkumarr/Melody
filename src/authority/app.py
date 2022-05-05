@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, jsonify, make_response, abort, redirect, send_file
-import json, requests, io
+import json, requests, io, datetime
 from threading import Lock, Thread
 from melody_bridge import *
 from quizzing import *
@@ -30,7 +30,7 @@ def login():
         if not username in database["users"]:
             datalock.acquire()
             if not username in database["users"]:
-                database["users"][username] = {"points" : 0, "ip" : request.remote_addr}
+                database["users"][username] = {"points" : 0, "ip" : data["ip"]}
             save_database()
             datalock.release()
         resp.set_cookie("username",username)
@@ -116,9 +116,6 @@ def playlists(playlist):
 
 @app.route('/downloads/<playlist>/<index>')
 def download(playlist, index):
-    #TODO this code has an edge case where a user could end up paying a different cost from what they agreed to
-    # I have ideas for fixing it (e.g. a system where a user locks in a cost the first time they visit the page)
-    # but I'm considering it unimportant for an initial demo
     userdata = prep_user_data(request)
     error = None
     if "username" not in userdata:
@@ -127,9 +124,9 @@ def download(playlist, index):
     videodata = database["videos"][database["file_uuid_list"][playlistdata["videos"][int(index)]]]
     quizmaster.check_reevaluate_cost(database["file_uuid_list"][playlistdata["videos"][int(index)]])
     cost = 0 if len(videodata["seeders"]) < 2 else 1
-    if "cost_accepted" in request.args and request.args["cost_accepted"] == "true":
+    if "cost_accepted" in request.args and int(request.args["cost_accepted"]) == cost:
         datalock.acquire()
-        if userdata["points"] < cost and False: # allowing points to go negative until I have implemented ways for users to seed before going negative
+        if userdata["points"] < cost:
             error = "Not enough points!  Seed files to gather more points!"
             datalock.release()
         else:
@@ -140,6 +137,8 @@ def download(playlist, index):
             save_database()
             datalock.release()
             return send_file(data, as_attachment=True, attachment_filename=f"{videodata['title']}.melody", mimetype="text/csv")
+    elif "cost_accepted" in request.args and int(request.args["cost_accepted"]) != cost:
+        error = f"Sorry but the cost of the video of {int(request.args['cost_accepted'])} is outdated.  See the up-to-date cost above."
     return render_template("download.html", playlisttitle=playlist, index=index, videodata=videodata, userdata=userdata, error=error, cost=cost)
 
 
@@ -179,7 +178,6 @@ if "videos" not in database:
     database["videos"] = dict()
 if "file_uuid_list" not in database:
     database["file_uuid_list"] = list()
-
 
 quizmaster = QuizMaster(datalock, database)
 quiz_thread = Thread(target=start_quiz_loop, args=(quizmaster,))
