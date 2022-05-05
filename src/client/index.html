@@ -158,12 +158,16 @@
             $('.menu .item')
             .tab()
             ;
-            var port = -1
+            var port = location.port
+            if (port !== "") {
+                $(".localport").hide();
+                $("#maincontent").show();
+            }
             function attachport() {
                 $(".localport").hide();
-                port = portinput.value
+                port = portinput.value;
                 $(".portdisplay").html("<p>Melody is attached to local port " + port + " now.</p>");
-                $("#maincontent").show()
+                $("#maincontent").show();
             }
             function searchfiles() {
                 var filename = searchinput.value;

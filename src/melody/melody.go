@@ -461,6 +461,9 @@ func (m *Melody) setupHttpRoutes() {
 	http.HandleFunc("/getfile", m.getFile)
 	http.HandleFunc("/submitfileforseedingform", m.submitFileForSeedingForm)
 
+	// Melody client
+	http.Handle("/", http.FileServer(http.Dir("../client")))
+
 	// Support for authority mostly
 	http.HandleFunc("/addnewfileraw", m.addNewFileRaw)
 	http.HandleFunc("/getfilesseeding", m.getFilesSeeding)
