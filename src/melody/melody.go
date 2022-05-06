@@ -22,6 +22,7 @@ import (
 const KeywordPrefix = "__KEYWORD__"
 const FilePrefix = "__FILE__"
 const StoreDirectoryBase = "MelodyFiles"
+const DhtRetries = 5
 
 type Melody struct {
 	dht     *dht.HashTableNode
@@ -518,22 +519,31 @@ func (m *Melody) AddFileToIndex(f FileMetadata) {
 	for _, word := range keywords {
 		key := fmt.Sprintf("%v%v", KeywordPrefix, word)
 
-		// TODO: There's a race here. We may need to add a version number info in DHT, or
-		// have the DHT itself supply and Append in place operation.
-		// TODO: We need to make sure get and set operations are atomic.
-		val := dht.Get(m.dht, key)
+		success := false
 
-		if val == nil {
-			newval := make([]FileMetadata, 1)
-			newval[0] = f
-			dht.Put(m.dht, key, newval)
-		} else {
-			if files, ok := val.([]FileMetadata); ok {
-				files = append(files, f)
-				dht.Put(m.dht, key, files)
+		// Retry in case of failures due to network or write conflicts
+		for i := 0; i < DhtRetries; i++ {
+			// The version in the DHT helps prevent write conflicts
+			val, ver := dht.Get(m.dht, key)
+			if val == nil {
+				newval := make([]FileMetadata, 1)
+				newval[0] = f
+				success = dht.Put(m.dht, key, newval, 0)
 			} else {
-				log.Fatalf("Invalid data in DHT. Expected File Metadata for key %v. Found %v", key, val)
+				if files, ok := val.([]FileMetadata); ok {
+					files = append(files, f)
+					success = dht.Put(m.dht, key, files, ver)
+				} else {
+					log.Fatalf("Invalid data in DHT. Expected File Metadata for key %v. Found %v", key, val)
+				}
 			}
+			if success {
+				break
+			}
+		}
+
+		if !success {
+			InfoLog("MELODY failed to write data to DHT")
 		}
 	}
 }
@@ -545,7 +555,7 @@ func (m *Melody) LookupFiles(query string) []FileMetadata {
 
 	for _, word := range keywords {
 		key := fmt.Sprintf("%v%v", KeywordPrefix, word)
-		val := dht.Get(m.dht, key)
+		val, _ := dht.Get(m.dht, key)
 
 		if val != nil {
 			if files, ok := val.([]FileMetadata); ok {
@@ -562,31 +572,41 @@ func (m *Melody) LookupFiles(query string) []FileMetadata {
 func (m *Melody) AddPeerServingFile(peerAddress string, f FileMetadata) {
 	key := fmt.Sprintf("%v%v", FilePrefix, f.Id)
 
-	// TODO: There's a race here. We may need to add a version number info in DHT, or
-	// have the DHT itself supply and Append in place operation.
-	// TODO: We need to make sure get and set operations are atomic.
-	val := dht.Get(m.dht, key)
+	success := false
 
-	if val == nil {
-		newval := make([]string, 1)
-		newval[0] = peerAddress
-		seederInfo := FileSeederInfo{}
-		seederInfo.Metadata = f
-		seederInfo.Seeders = newval
-		dht.Put(m.dht, key, seederInfo)
-	} else {
-		if seederInfo, ok := val.(FileSeederInfo); ok {
-			seederInfo.Seeders = append(seederInfo.Seeders, peerAddress)
-			dht.Put(m.dht, key, seederInfo)
+	for i := 0; i < DhtRetries; i++ {
+		// The version in the DHT helps prevent write conflicts
+		val, ver := dht.Get(m.dht, key)
+
+		if val == nil {
+			newval := make([]string, 1)
+			newval[0] = peerAddress
+			seederInfo := FileSeederInfo{}
+			seederInfo.Metadata = f
+			seederInfo.Seeders = newval
+			success = dht.Put(m.dht, key, seederInfo, 0)
 		} else {
-			log.Fatalf("Invalid data in DHT. Expected FileSeederInfo for key %v.", key)
+			if seederInfo, ok := val.(FileSeederInfo); ok {
+				seederInfo.Seeders = append(seederInfo.Seeders, peerAddress)
+				success = dht.Put(m.dht, key, seederInfo, ver)
+			} else {
+				log.Fatalf("Invalid data in DHT. Expected FileSeederInfo for key %v.", key)
+			}
 		}
+
+		if success {
+			break
+		}
+	}
+
+	if !success {
+		InfoLog("MELODY failed to write data to DHT")
 	}
 }
 
 func (m *Melody) LocateSeeders(fileId string) FileSeederInfo {
 	key := fmt.Sprintf("%v%v", FilePrefix, fileId)
-	val := dht.Get(m.dht, key)
+	val, _ := dht.Get(m.dht, key)
 
 	if val == nil {
 		return FileSeederInfo{}
