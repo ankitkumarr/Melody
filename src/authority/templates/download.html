@@ -10,7 +10,7 @@
 <h2>{{ videodata["title"] }}</h2>
 <h3>From playlist: <a href="/playlists/{{ playlisttitle }}">{{ playlisttitle }}</a></h3>
 <hr>
-<p>{{ videodata["desc"] }}</p>
+<p>{{ desc }}</p>
 <hr>
 <button onclick="dodownload()">Download this video for {{ cost }} points.</button>
 {% if error != None %}

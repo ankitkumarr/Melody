@@ -63,7 +63,7 @@ def playlists(playlist):
                     error = "Playlist already exists."
                 else:
                     datalock.acquire()
-                    database["playlists"][title] = {"creator" : userdata["username"], "videos" : []}
+                    database["playlists"][title] = {"creator" : userdata["username"], "videos" : [], "descs" : []}
                     save_database()
                     datalock.release()
                     return redirect(f"/playlists/{title}")
@@ -89,7 +89,6 @@ def playlists(playlist):
                 error = "Please enter the file uuid."
             else:
                 viddata = get_metadata_from_file(data["file_uuid"])
-                viddata["desc"] = data["desc"]
                 if viddata is None or "title" not in viddata:
                     error = f"No file for uuid {data['file_uuid']} exists in the Melody DHT."
                 else:
@@ -104,6 +103,7 @@ def playlists(playlist):
                         error = "That video is already in this playlist!"
                     else:
                         database["playlists"][playlist]["videos"].append(vidindex)
+                        database["playlists"][playlist]["descs"].append(data["desc"])
                     save_database()
                     playlistdata = database["playlists"][playlist]
             datalock.release()
@@ -139,7 +139,8 @@ def download(playlist, index):
             return send_file(data, as_attachment=True, attachment_filename=f"{videodata['title']}.melody", mimetype="text/csv")
     elif "cost_accepted" in request.args and int(request.args["cost_accepted"]) != cost:
         error = f"Sorry but the cost of the video of {int(request.args['cost_accepted'])} is outdated.  See the up-to-date cost above."
-    return render_template("download.html", playlisttitle=playlist, index=index, videodata=videodata, userdata=userdata, error=error, cost=cost)
+    desc = playlistdata["descs"][int(index)]
+    return render_template("download.html", playlisttitle=playlist, desc=desc, index=index, videodata=videodata, userdata=userdata, error=error, cost=cost)
 
 
 

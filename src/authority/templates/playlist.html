@@ -7,7 +7,7 @@
     <div class="video">
         <a href="/downloads/{{ playlistdata["title"] }}/{{ loop.index0 }}">{{ videodata[video_uuids[video]]["title"] }}</a>
         <p>
-        {{ videodata[video_uuids[video]]["desc"] }}
+        {{ playlistdata["descs"][loop.index0] }}
         </p>
     </div>
     <hr>
