@@ -751,7 +751,9 @@ func (hn *HashTableNode) predecessorChanged(old chord.NodeInfo, new chord.NodeIn
 		old = hn.lastknownPred
 	}
 
-	if new.Addr == "" || new.Id <= 0 {
+	// Sometimes, if only Node left in the ring, the chord new predecessor
+	// node can be itself.
+	if new.Addr == "" || new.Id <= 0 || new.Addr == hn.address {
 		hn.lastknownPred = old
 		return
 	}
@@ -793,6 +795,9 @@ func (hn *HashTableNode) joined(successor chord.NodeInfo) {
 			hn.data.AddRange(reply.Data)
 			hn.debugLog("Received data until %v from %v at address %v successfully. Got %v key vals. My hashId is %v.", successor.Id, successor.StringID, successor.Addr, len(reply.Data), myId.HashedUid)
 			hn.dataDebugLog("The key vals I was assigned are %v", reply.Data)
+			if len(reply.Data) > 0 {
+				InfoLog("DHT received %v key value pairs from another DHT (%v) at address %v", len(reply.Data), successor.StringID, successor.Addr)
+			}
 			break
 		} else {
 			hn.debugLog("Did not receive data until %v from %v at address %v. Error: %v. Retrying forever...", successor.Id, successor.StringID, successor.Addr, reply.Err)
