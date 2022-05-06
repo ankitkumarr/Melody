@@ -18,6 +18,7 @@
 {% if playlistdata["creator"] == userdata["username"] %}
 <form method="POST" action="/playlists/{{ playlistdata["title"] }}" enctype="multipart.form-data">
     <input type="text" name="file_uuid" placeholder="Melody UUID">
+    <input type="text" name="desc" placeholder="Video description.">
     <input type="submit" value="Submit">
 </form>
     {% if error != None %}

@@ -89,6 +89,7 @@ def playlists(playlist):
                 error = "Please enter the file uuid."
             else:
                 viddata = get_metadata_from_file(data["file_uuid"])
+                viddata["desc"] = data["desc"]
                 if viddata is None or "title" not in viddata:
                     error = f"No file for uuid {data['file_uuid']} exists in the Melody DHT."
                 else:

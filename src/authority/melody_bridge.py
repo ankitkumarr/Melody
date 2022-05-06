@@ -49,7 +49,7 @@ def get_metadata_from_file(file_uuid):
         data = json.loads(requests.get(make_url(localhost, f"/findfile?fileId={file_uuid}")).text)
         if data["Metadata"]["Id"] != file_uuid:
             return None
-        outdata = {"title" : data["Metadata"]["Title"], "seeders" : data["Seeders"], "desc" : f"Description of video {data['Metadata']['Title']} would go here if the DHT supported it."}
+        outdata = {"title" : data["Metadata"]["Title"], "seeders" : data["Seeders"], "hash":data["Metadata"]["Hash"]}
         return outdata
     except:
         return None

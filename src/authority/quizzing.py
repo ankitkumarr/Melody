@@ -30,7 +30,7 @@ class QuizMaster:
                     #del self.database["videos"][video]
                 else:
                     fresh_data["last_updated"] = now.isoformat()
-                    self.database["videos"][video] = fresh_data
+                    self.database["videos"][video].update(fresh_data)
                 self.save_database()
         except Exception as e:
             print(f"There was an error in check_reevaluate_cost: {e}")
@@ -53,13 +53,11 @@ class QuizMaster:
                     print(f"{user} is not seeding any files that are known to the authority")
                     continue
                 quiz_choice = random.choice(filtered_files)
-                validation = download_file(quiz_choice).content
+                val_hash = self.database["videos"][quiz_choice]["hash"]
                 submission = get_data_from_client(userdata["ip"], quiz_choice).content
-                val_hash = hashlib.sha256()
-                val_hash.update(validation)
                 sub_hash = hashlib.sha256()
                 sub_hash.update(submission)
-                if val_hash.hexdigest() == sub_hash.hexdigest():
+                if val_hash == sub_hash.hexdigest():
                     score = len(filtered_files) * timeframe.total_seconds() * 0.01
                     print(f"User {user} passed a quiz and was awarded {score} points.")
                     self.lock.acquire()
