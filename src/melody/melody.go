@@ -2,7 +2,9 @@ package melody
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/gob"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,6 +32,7 @@ type Melody struct {
 type FileMetadata struct {
 	Title string
 	Id    string
+	Hash  string
 }
 
 type FileSeederInfo struct {
@@ -93,7 +96,8 @@ func (m *Melody) getFile(w http.ResponseWriter, r *http.Request) {
 
 		if filedata.Metadata.Id != fileid {
 			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte("This file (although stored) is not listed in the index.ß"))
+			w.Write([]byte("This file (although stored) is not listed in the index."))
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/octet-stream")
@@ -146,7 +150,9 @@ func (m *Melody) addNewFileRaw(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(fileId))
 
-	newfile := FileMetadata{Id: fileId, Title: filename}
+	hash := sha256.Sum256(filedata)
+
+	newfile := FileMetadata{Id: fileId, Title: filename, Hash: hex.EncodeToString(hash[:])}
 	m.AddFileToIndex(newfile)
 	m.AddPeerServingFile(m.address, newfile)
 }
@@ -188,13 +194,21 @@ func (m *Melody) addNewFileForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	io.Copy(f, receivedFile)
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(fileId))
+	re := io.TeeReader(receivedFile, f)
 
-	newfile := FileMetadata{Id: fileId, Title: filename}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, re); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Could not compute the hash of the uploaded file"))
+		return
+	}
+
+	newfile := FileMetadata{Id: fileId, Title: filename, Hash: hex.EncodeToString(hash.Sum(nil))}
 	m.AddFileToIndex(newfile)
 	m.AddPeerServingFile(m.address, newfile)
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(fileId))
 }
 
 func (m *Melody) submitFileForSeedingForm(w http.ResponseWriter, r *http.Request) {
@@ -254,71 +268,91 @@ func (m *Melody) submitFileForSeedingForm(w http.ResponseWriter, r *http.Request
 		w.Write([]byte("Error writing the file to storage"))
 		return
 	}
-	defer f.Close()
-	io.Copy(f, receivedFile)
+	nr := io.TeeReader(receivedFile, f)
 
+	hash := sha256.New()
+	if _, err := io.Copy(hash, nr); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Could not compute the hash of the uploaded file"))
+		f.Close()
+		return
+	}
+
+	hexhash := hex.EncodeToString(hash.Sum(nil))
+	if hexhash != fsi.Metadata.Hash {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("The hash of the seeded file did not match the hash stored."))
+		f.Close()
+		os.Remove(m.getStoreDirectoryName() + fileId)
+		return
+	}
+
+	defer f.Close()
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(fileId))
 	m.AddPeerServingFile(m.address, fsi.Metadata)
 }
 
-func (m *Melody) submitFileForSeeding(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	if len(query["fileid"]) == 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("Missing required query param 'fileid'"))
-		return
-	}
+//
+// This method is for adding the file as a binary data in the request.
+//
+// func (m *Melody) submitFileForSeeding(w http.ResponseWriter, r *http.Request) {
+// 	query := r.URL.Query()
+// 	w.Header().Set("Access-Control-Allow-Origin", "*")
+// 	if len(query["fileid"]) == 0 {
+// 		w.WriteHeader(http.StatusBadRequest)
+// 		w.Write([]byte("Missing required query param 'fileid'"))
+// 		return
+// 	}
 
-	fileId := query["fileid"][0]
+// 	fileId := query["fileid"][0]
 
-	fsi := m.LocateSeeders(fileId)
-	if fsi.Metadata.Id == "" || fsi.Metadata.Id != fileId {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("Could not find the fileId in the network"))
-		return
-	}
+// 	fsi := m.LocateSeeders(fileId)
+// 	if fsi.Metadata.Id == "" || fsi.Metadata.Id != fileId {
+// 		w.WriteHeader(http.StatusBadRequest)
+// 		w.Write([]byte("Could not find the fileId in the network"))
+// 		return
+// 	}
 
-	// Ideally this would be streamed to the client.
-	// However, loading in bytes in memory if ok for now for our prototype.
-	filedata, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("Could not read the file sent in the request"))
-		return
-	}
+// 	// Ideally this would be streamed to the client.
+// 	// However, loading in bytes in memory if ok for now for our prototype.
+// 	filedata, err := ioutil.ReadAll(r.Body)
+// 	if err != nil {
+// 		w.WriteHeader(http.StatusBadRequest)
+// 		w.Write([]byte("Could not read the file sent in the request"))
+// 		return
+// 	}
 
-	os.MkdirAll(m.getStoreDirectoryName(), os.ModePerm)
+// 	os.MkdirAll(m.getStoreDirectoryName(), os.ModePerm)
 
-	files, err := ioutil.ReadDir(m.getStoreDirectoryName())
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Could not find the files being seeded"))
-		return
-	}
+// 	files, err := ioutil.ReadDir(m.getStoreDirectoryName())
+// 	if err != nil {
+// 		w.WriteHeader(http.StatusInternalServerError)
+// 		w.Write([]byte("Could not find the files being seeded"))
+// 		return
+// 	}
 
-	for _, f := range files {
-		if f.Name() == fileId {
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte("Already seeding file with the given ID"))
-			return
-		}
-	}
+// 	for _, f := range files {
+// 		if f.Name() == fileId {
+// 			w.WriteHeader(http.StatusBadRequest)
+// 			w.Write([]byte("Already seeding file with the given ID"))
+// 			return
+// 		}
+// 	}
 
-	f, err := os.Create(m.getStoreDirectoryName() + fileId)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Error writing the file to storage"))
-		return
-	}
-	defer f.Close()
-	f.Write(filedata)
+// 	f, err := os.Create(m.getStoreDirectoryName() + fileId)
+// 	if err != nil {
+// 		w.WriteHeader(http.StatusInternalServerError)
+// 		w.Write([]byte("Error writing the file to storage"))
+// 		return
+// 	}
+// 	defer f.Close()
+// 	f.Write(filedata)
 
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(fileId))
-	m.AddPeerServingFile(m.address, fsi.Metadata)
-}
+// 	w.WriteHeader(http.StatusOK)
+// 	w.Write([]byte(fileId))
+// 	m.AddPeerServingFile(m.address, fsi.Metadata)
+// }
 
 func (m *Melody) getFilesSeeding(w http.ResponseWriter, r *http.Request) {
 	os.MkdirAll(m.getStoreDirectoryName(), os.ModePerm)
@@ -464,12 +498,14 @@ func (m *Melody) setupHttpRoutes() {
 	// Melody client
 	http.Handle("/", http.FileServer(http.Dir("../client")))
 
-	// Support for authority mostly
+	// raw requests (easy curl) support
 	http.HandleFunc("/addnewfileraw", m.addNewFileRaw)
+	// http.HandleFunc("/submitfileforseeding", m.submitFileForSeeding)
+
+	// Support for authority mostly
 	http.HandleFunc("/getfilesseeding", m.getFilesSeeding)
 	http.HandleFunc("/getnextnodes", m.getNextNodes)
 	http.HandleFunc("/getlocalkeywords", m.getAllLocalKeywords)
-	http.HandleFunc("/submitfileforseeding", m.submitFileForSeeding)
 }
 
 func (m *Melody) getStoreDirectoryName() string {
