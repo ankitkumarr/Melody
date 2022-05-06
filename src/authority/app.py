@@ -109,7 +109,6 @@ def playlists(playlist):
         playlistdata = playlistdata.copy()
         playlistdata["title"] = playlist
         if len(playlistdata["videos"]) == 0:
-
             del playlistdata["videos"]
         return render_template("playlist.html", userdata=userdata, playlistdata=playlistdata, error=error, videodata=database["videos"], video_uuids=database["file_uuid_list"])
 

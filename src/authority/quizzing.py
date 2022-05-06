@@ -26,7 +26,8 @@ class QuizMaster:
                 fresh_data = get_metadata_from_file(video)
                 self.lock.acquire()
                 if fresh_data is None:
-                    del self.database["videos"][video]
+                    pass
+                    #del self.database["videos"][video]
                 else:
                     fresh_data["last_updated"] = now.isoformat()
                     self.database["videos"][video] = fresh_data
@@ -58,7 +59,7 @@ class QuizMaster:
                 val_hash.update(validation)
                 sub_hash = hashlib.sha256()
                 sub_hash.update(submission)
-                if val_hash.digest() == sub_hash.digest():
+                if val_hash.hexdigest() == sub_hash.hexdigest():
                     score = len(filtered_files) * timeframe.total_seconds() * 0.01
                     print(f"User {user} passed a quiz and was awarded {score} points.")
                     self.lock.acquire()
