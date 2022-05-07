@@ -16,19 +16,19 @@ Our sample Authority curates videos in the form of user-created and managed play
 
 # How to run
 
-Install the prerequisites:
-pip install flask
-pip install requests
+1. Install the prerequisites:
+`pip install flask`
+`pip install requests`
 
-Run the webserver:
-flask run
+2. Fill in the IP address of the Authority's Melody node.  Edit line 5 of melody_bridge.py (by default its set to `localhost:8001`).
+
+3. Run the webserver:
+`flask run`
 
 # COMPLETED
 - make an account or login (WARNING: no security is implemented, it just takes a username)
+- enter the IP address of your client's Melody node to earn points for seeding
 - view or make playlists
 - add videos to playlists that you made
-
-# TODO
 - charge points for downloading
-- quiz system (this may be a file that needs to be run separately)
-- melody\_bridge.py needs to be filled in
+- quiz system to earn points
