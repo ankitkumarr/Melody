@@ -24,6 +24,8 @@ go build main.go
 
 Example another server join: `./main 22 8002 false 11 127.0.0.1:8001` (`false` indicates a no new network / ring)
 
+To access the client, open a connection to either of the servers from your browser. Example `http://localhost:8001`.
+
 A Melody server has three components - Chord node, DHT node, and the App node. These components make a Melody server binary. A Melody server uses its DHT node to store file metadata and search keyword lookup in the DHT. The DHT node uses its Chord node to lookup other DHT nodes in the network.
 
 Our tests are structured as follows:
