@@ -25,7 +25,7 @@ Our sample Authority curates videos in the form of user-created and managed play
 3. Run the webserver:
 `flask run`
 
-# COMPLETED
+# Features
 - make an account or login (WARNING: no security is implemented, it just takes a username)
 - enter the IP address of your client's Melody node to earn points for seeding
 - view or make playlists
