@@ -330,8 +330,7 @@ func (hn *HashTableNode) MoveReplicas(args *MoveReplicasArgs, reply *MoveReplica
 
 	// Remove data from the old replica. We can just reset it
 	// and let the garabage collector free up memory.
-	resetReplica := ReplicaInfo{}
-	hn.replicas[args.FromId.HashedUid] = &resetReplica
+	hn.replicas[args.FromId.HashedUid].Replica.RemoveRange(args.Data, args.Versions)
 
 	reply.Success = true
 	hn.debugLog("MoveReplicas call to move %v replicas from %v to %v succeded.", len(args.Data), args.FromId.Uid, args.ToId.Uid)

@@ -65,3 +65,13 @@ func (hd *HashData) AddRange(kvs map[string]interface{}, versions map[string]int
 		hd.Versions[k] = versions[k]
 	}
 }
+
+func (hd *HashData) RemoveRange(kvs map[string]interface{}, versions map[string]int) {
+	if len(hd.Data) == 0 {
+		return
+	}
+	for k := range kvs {
+		delete(hd.Data, k)
+		delete(hd.Versions, k)
+	}
+}
