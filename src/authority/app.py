@@ -133,10 +133,11 @@ def download(playlist, index):
             userdata["points"] -= cost
             data = io.BytesIO()
             data.write(database["file_uuid_list"][playlistdata["videos"][int(index)]].encode())
+            print(database["file_uuid_list"][playlistdata["videos"][int(index)]])
             data.seek(0)
             save_database()
             datalock.release()
-            return send_file(data, as_attachment=True, attachment_filename=f"{videodata['title']}.melody", mimetype="text/csv")
+            return send_file(data, as_attachment=True, attachment_filename=f"{videodata['title']}.txt", mimetype="text/csv")
     elif "cost_accepted" in request.args and int(request.args["cost_accepted"]) != cost:
         error = f"Sorry but the cost of the video of {int(request.args['cost_accepted'])} is outdated.  See the up-to-date cost above."
     desc = playlistdata["descs"][int(index)]
