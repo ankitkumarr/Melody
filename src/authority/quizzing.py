@@ -7,7 +7,7 @@ from melody_bridge import *
 
 
 class QuizMaster:
-    def __init__(self, lock, database, period_range=(10,30)):
+    def __init__(self, lock, database, period_range=(1,5)):
         self.lock = lock
         self.database = database
         self.killed = False
@@ -58,7 +58,7 @@ class QuizMaster:
                 sub_hash = hashlib.sha256()
                 sub_hash.update(submission)
                 if val_hash == sub_hash.hexdigest():
-                    score = len(filtered_files) * timeframe.total_seconds() * 0.01
+                    score = len(filtered_files) * timeframe.total_seconds() * 0.05
                     print(f"User {user} passed a quiz and was awarded {score} points.")
                     self.lock.acquire()
                     self.database["users"][user]["points"] += score
